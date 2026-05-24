@@ -39,11 +39,18 @@ async def test_send_sms_posts_twilio_message_for_sms_approvers(monkeypatch):
     monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
     monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "+15550000000")
+    monkeypatch.setattr(
+        notifications,
+        "create_decision_token",
+        lambda action_id, decision, expires_in_seconds: f"{decision}_token",
+        raising=False,
+    )
     approval = SimpleNamespace(
         id="act_123",
         function_name="transfer_funds",
         risk_level="high",
         approvers=["sms:+15551234567"],
+        timeout_seconds=300,
     )
 
     await notifications.dispatch_approval_notifications(approval, tenant=None)
@@ -59,8 +66,8 @@ async def test_send_sms_posts_twilio_message_for_sms_approvers(monkeypatch):
                     "Body": (
                         "Sentinel approval needed: transfer_funds\n"
                         "Risk: high\n"
-                        "Approve: https://app.oversight.sh/approve/act_123?d=approved\n"
-                        "Reject: https://app.oversight.sh/approve/act_123?d=rejected"
+                        "Approve: https://app.oversight.sh/approve/act_123?d=approved&t=approved_token\n"
+                        "Reject: https://app.oversight.sh/approve/act_123?d=rejected&t=rejected_token"
                     ),
                 },
             },
@@ -75,9 +82,9 @@ async def test_sms_is_not_sent_without_twilio_credentials():
         function_name="transfer_funds",
         risk_level="high",
         approvers=["sms:+15551234567"],
+        timeout_seconds=300,
     )
 
     await notifications.dispatch_approval_notifications(approval, tenant=None)
 
     assert FakeAsyncClient.requests == []
-

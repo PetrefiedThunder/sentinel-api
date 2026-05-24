@@ -1,10 +1,12 @@
 import asyncio
 import json
 import logging
+from urllib.parse import urlencode
 
 import httpx
 
 from app.config import settings
+from app.services.approval_tokens import create_decision_token
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +32,8 @@ async def _send_sms(approval, tenant):
     if not recipients:
         return
     try:
-        approve_url = f"{settings.PUBLIC_APP_URL}/approve/{approval.id}?d=approved"
-        reject_url = f"{settings.PUBLIC_APP_URL}/approve/{approval.id}?d=rejected"
+        approve_url = _decision_url(approval, "approved")
+        reject_url = _decision_url(approval, "rejected")
         body = (
             f"Sentinel approval needed: {approval.function_name}\n"
             f"Risk: {approval.risk_level}\n"
@@ -68,8 +70,8 @@ async def _send_email(approval, tenant):
     if not recipients:
         return
     try:
-        approve_url = f"{settings.PUBLIC_APP_URL}/approve/{approval.id}?d=approved"
-        reject_url = f"{settings.PUBLIC_APP_URL}/approve/{approval.id}?d=rejected"
+        approve_url = _decision_url(approval, "approved")
+        reject_url = _decision_url(approval, "rejected")
         args_str = json.dumps(approval.arguments, indent=2, default=str)
         html = (
             f"<h2>Approval needed: {approval.function_name}</h2>"
@@ -91,3 +93,13 @@ async def _send_email(approval, tenant):
             )
     except Exception as e:
         logger.warning("email notify failed: %s", e)
+
+
+def _decision_url(approval, decision: str) -> str:
+    token = create_decision_token(
+        approval.id,
+        decision,
+        expires_in_seconds=approval.timeout_seconds,
+    )
+    query = urlencode({"d": decision, "t": token})
+    return f"{settings.PUBLIC_APP_URL}/approve/{approval.id}?{query}"

@@ -45,6 +45,10 @@ class DecisionRequest(BaseModel):
     reason: str | None = None
 
 
+class TokenDecisionRequest(BaseModel):
+    token: str
+
+
 class AuditEventCreate(BaseModel):
     action_id: str
     execution_result: str

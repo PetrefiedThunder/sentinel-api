@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -7,11 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_tenant
 from app.db import get_db
 from app.models import Approval, Tenant
-from app.schemas import ApprovalCreate, DecisionRequest
+from app.schemas import ApprovalCreate, DecisionRequest, TokenDecisionRequest
 from app.services.approval_service import create_approval
+from app.services.approval_tokens import InvalidApprovalToken, verify_decision_token
 from app.services.audit_log import append_audit_event
 
 router = APIRouter()
+
+
+def _utcnow():
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _serialize(a: Approval) -> dict:
@@ -85,11 +90,40 @@ async def decide(
         raise HTTPException(400, "decision must be 'approved' or 'rejected'")
     approval.decision = payload.decision
     approval.decided_by = payload.decided_by
-    approval.decided_at = datetime.utcnow()
+    approval.decided_at = _utcnow()
     approval.reason = payload.reason
     await db.commit()
     await db.refresh(approval)
     await append_audit_event(
         db, tenant.id, approval.id, f"decision:{payload.decision}"
+    )
+    return _serialize(approval)
+
+
+@router.post("/{action_id}/token-decision")
+async def decide_with_token(
+    action_id: str,
+    payload: TokenDecisionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        decision = verify_decision_token(payload.token, action_id)
+    except (InvalidApprovalToken, ValueError):
+        raise HTTPException(401, "Invalid or expired approval token")
+
+    approval = await db.get(Approval, action_id)
+    if not approval:
+        raise HTTPException(404, "Not found")
+    if approval.decision != "pending":
+        raise HTTPException(400, f"Already {approval.decision}")
+
+    approval.decision = decision
+    approval.decided_by = "signed_link"
+    approval.decided_at = _utcnow()
+    approval.reason = "Signed approval link"
+    await db.commit()
+    await db.refresh(approval)
+    await append_audit_event(
+        db, approval.tenant_id, approval.id, f"decision:{decision}"
     )
     return _serialize(approval)
