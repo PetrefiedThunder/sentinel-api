@@ -13,8 +13,6 @@ def upgrade():
         sa.Column("name", sa.String, nullable=False),
         sa.Column("email", sa.String, unique=True, nullable=False),
         sa.Column("created_at", sa.DateTime, nullable=False),
-        sa.Column("slack_team_id", sa.String, nullable=True),
-        sa.Column("slack_bot_token", sa.String, nullable=True),
     )
     op.create_table(
         "api_keys",
@@ -59,4 +57,3 @@ def downgrade():
     op.drop_table("approvals")
     op.drop_table("api_keys")
     op.drop_table("tenants")
-

@@ -20,10 +20,15 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    return os.environ.get(
+    url = os.environ.get(
         "DATABASE_URL",
         "postgresql+asyncpg://user:pass@localhost:5432/sentinel",
     )
+    if url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+    elif url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgres://"):]
+    return url
 
 
 def run_migrations_offline() -> None:
