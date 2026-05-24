@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 
@@ -10,74 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 async def dispatch_approval_notifications(approval, tenant):
-    await asyncio.gather(
-        _send_slack(approval, tenant),
-        _send_email(approval, tenant),
-        return_exceptions=True,
-    )
-
-
-async def _send_slack(approval, tenant):
-    token = settings.SLACK_BOT_TOKEN
-    if not token:
-        return
-    channel = settings.SLACK_CHANNEL or ""
-    if not channel:
-        for approver in approval.approvers or []:
-            if isinstance(approver, str) and approver.startswith("slack://"):
-                channel = approver.split("slack://channel/")[-1]
-                break
-    if not channel:
-        return
-    try:
-        args_str = json.dumps(approval.arguments, indent=2, default=str)[:2500]
-        blocks = [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": (
-                        f"*Approval needed:* `{approval.function_name}`\n"
-                        f"*Risk:* {approval.risk_level}\n"
-                        f"*Arguments:*\n```{args_str}```"
-                    ),
-                },
-            },
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "Approve"},
-                        "style": "primary",
-                        "value": approval.id,
-                        "action_id": "approve",
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "Reject"},
-                        "style": "danger",
-                        "value": approval.id,
-                        "action_id": "reject",
-                    },
-                ],
-            },
-        ]
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
-                "https://slack.com/api/chat.postMessage",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json; charset=utf-8",
-                },
-                json={
-                    "channel": channel,
-                    "blocks": blocks,
-                    "text": f"Approval needed: {approval.function_name}",
-                },
-            )
-    except Exception as e:
-        logger.warning("slack notify failed: %s", e)
+    await _send_email(approval, tenant)
 
 
 async def _send_email(approval, tenant):
