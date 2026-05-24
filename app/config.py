@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_FROM_NUMBER: str = ""
     RESEND_API_KEY: str = ""
-    PUBLIC_APP_URL: str = "https://app.oversight.sh"
+    PUBLIC_APP_URL: str = "https://app.pauseapi.app"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

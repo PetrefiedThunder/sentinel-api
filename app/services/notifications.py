@@ -85,7 +85,7 @@ async def _send_email(approval, tenant):
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "from": "approvals@oversight.sh",
+                    "from": "approvals@pauseapi.app",
                     "to": recipients,
                     "subject": f"Approval needed: {approval.function_name}",
                     "html": html,

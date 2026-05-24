@@ -8,8 +8,8 @@ app = FastAPI(title="Sentinel API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://oversight.sh",
-        "https://app.oversight.sh",
+        "https://pauseapi.app",
+        "https://app.pauseapi.app",
         "http://localhost:3000",
     ],
     allow_methods=["*"],

@@ -31,7 +31,7 @@ def reset_settings(monkeypatch):
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "")
     monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "")
     monkeypatch.setattr(settings, "RESEND_API_KEY", "")
-    monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://app.oversight.sh")
+    monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://app.pauseapi.app")
 
 
 @pytest.mark.asyncio
@@ -66,8 +66,8 @@ async def test_send_sms_posts_twilio_message_for_sms_approvers(monkeypatch):
                     "Body": (
                         "Sentinel approval needed: transfer_funds\n"
                         "Risk: high\n"
-                        "Approve: https://app.oversight.sh/approve/act_123?d=approved&t=approved_token\n"
-                        "Reject: https://app.oversight.sh/approve/act_123?d=rejected&t=rejected_token"
+                        "Approve: https://app.pauseapi.app/approve/act_123?d=approved&t=approved_token\n"
+                        "Reject: https://app.pauseapi.app/approve/act_123?d=rejected&t=rejected_token"
                     ),
                 },
             },
