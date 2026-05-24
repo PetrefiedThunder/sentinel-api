@@ -7,6 +7,13 @@ import time
 from app.config import settings
 
 VALID_DECISIONS = {"approved", "rejected"}
+WEAK_SIGNING_SECRETS = {
+    "",
+    "change-me",
+    "dev-only-replace",
+    "replace-with-rs256-key",
+    "replace-with-32-byte-random-secret",
+}
 
 
 class InvalidApprovalToken(ValueError):
@@ -65,6 +72,7 @@ def verify_decision_token(
 
 
 def _sign(payload_part: str) -> str:
+    _require_strong_signing_secret()
     digest = hmac.new(
         settings.JWT_SECRET.encode(),
         payload_part.encode(),
@@ -81,3 +89,8 @@ def _base64url_decode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(value + padding)
 
+
+def _require_strong_signing_secret() -> None:
+    secret = settings.JWT_SECRET
+    if secret in WEAK_SIGNING_SECRETS or len(secret) < 32:
+        raise RuntimeError("JWT_SECRET must be a strong random value for approval links")
