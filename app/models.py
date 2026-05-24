@@ -21,6 +21,8 @@ class Tenant(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    slack_team_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    slack_bot_token: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ApiKey(Base):
@@ -60,3 +62,4 @@ class AuditEvent(Base):
     prev_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     event_hash: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
