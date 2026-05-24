@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -9,7 +10,51 @@ logger = logging.getLogger(__name__)
 
 
 async def dispatch_approval_notifications(approval, tenant):
-    await _send_email(approval, tenant)
+    await asyncio.gather(
+        _send_sms(approval, tenant),
+        _send_email(approval, tenant),
+        return_exceptions=True,
+    )
+
+
+async def _send_sms(approval, tenant):
+    account_sid = settings.TWILIO_ACCOUNT_SID
+    auth_token = settings.TWILIO_AUTH_TOKEN
+    from_number = settings.TWILIO_FROM_NUMBER
+    if not account_sid or not auth_token or not from_number:
+        return
+    recipients: list[str] = []
+    for approver in approval.approvers or []:
+        if isinstance(approver, str) and approver.startswith("sms:"):
+            recipients.append(approver[len("sms:") :])
+    if not recipients:
+        return
+    try:
+        approve_url = f"{settings.PUBLIC_APP_URL}/approve/{approval.id}?d=approved"
+        reject_url = f"{settings.PUBLIC_APP_URL}/approve/{approval.id}?d=rejected"
+        body = (
+            f"Sentinel approval needed: {approval.function_name}\n"
+            f"Risk: {approval.risk_level}\n"
+            f"Approve: {approve_url}\n"
+            f"Reject: {reject_url}"
+        )
+        url = (
+            "https://api.twilio.com/2010-04-01/Accounts/"
+            f"{account_sid}/Messages.json"
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            for recipient in recipients:
+                await client.post(
+                    url,
+                    auth=(account_sid, auth_token),
+                    data={
+                        "From": from_number,
+                        "To": recipient,
+                        "Body": body,
+                    },
+                )
+    except Exception as e:
+        logger.warning("sms notify failed: %s", e)
 
 
 async def _send_email(approval, tenant):
