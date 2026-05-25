@@ -1,7 +1,7 @@
 """tenants.default_approvers
 
 Revision ID: 003_tenant_default_approvers
-Revises: 002_contacts_notifications
+Revises: 002
 Create Date: 2026-05-25
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "003_tenant_default_approvers"
-down_revision = "002_contacts_notifications"
+revision = "003"
+down_revision = "002"
 branch_labels = None
 depends_on = None
 
