@@ -4,6 +4,18 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, field_validator
 
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
+APPROVER_HELP = (
+    "approvers must be a non-empty list. "
+    "Use email (e.g. 'alice@acme.com'), 'mailto:alice@acme.com', or 'sms:+15551234567'."
+)
+
+
+def _is_supported_approver(value: str) -> bool:
+    if value.startswith("sms:"):
+        return bool(value[len("sms:"):].strip())
+    if value.startswith("mailto:"):
+        return "@" in value[len("mailto:"):]
+    return "@" in value and ":" not in value.split("@", 1)[0]
 
 
 class TenantSignup(BaseModel):
@@ -26,12 +38,12 @@ class ApprovalCreate(BaseModel):
     @field_validator("approvers")
     @classmethod
     def _non_empty_approvers(cls, v: list[str]) -> list[str]:
-        if not v or not any(isinstance(x, str) and x.strip() for x in v):
-            raise ValueError(
-                "approvers must be a non-empty list. "
-                "Use email (e.g. 'alice@acme.com'), 'slack://channel/C123', or 'sms:+15551234567'."
-            )
-        return v
+        approvers = [x.strip() for x in v if isinstance(x, str) and x.strip()]
+        if not approvers:
+            raise ValueError(APPROVER_HELP)
+        if any(not _is_supported_approver(approver) for approver in approvers):
+            raise ValueError(APPROVER_HELP)
+        return approvers
 
     @field_validator("risk_level")
     @classmethod

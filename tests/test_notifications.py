@@ -88,3 +88,21 @@ async def test_sms_is_not_sent_without_twilio_credentials():
     await notifications.dispatch_approval_notifications(approval, tenant=None)
 
     assert FakeAsyncClient.requests == []
+
+
+@pytest.mark.asyncio
+async def test_slack_approvers_do_not_dispatch_notifications():
+    approval = SimpleNamespace(
+        id="act_123",
+        function_name="transfer_funds",
+        risk_level="high",
+        arguments={"amount": 1000},
+        approvers=["slack://channel/C123"],
+        timeout_seconds=300,
+    )
+
+    await notifications.dispatch_approval_notifications(approval, tenant=None)
+
+    assert not hasattr(settings, "SLACK_BOT_TOKEN")
+    assert not hasattr(notifications, "_send_slack")
+    assert FakeAsyncClient.requests == []
