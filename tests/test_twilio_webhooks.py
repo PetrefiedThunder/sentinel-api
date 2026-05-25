@@ -15,6 +15,7 @@ def test_twilio_status_webhook_rejects_invalid_signature(monkeypatch):
     engine, session, tenant = run(make_sqlite_session())
     try:
         monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
         with client_for(session, tenant) as client:
             response = client.post(
                 "/webhooks/twilio/status",
@@ -32,6 +33,7 @@ def test_twilio_status_webhook_updates_attempt_once(monkeypatch):
     engine, session, tenant = run(make_sqlite_session())
     try:
         monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
         approval = Approval(
             id="act_123",
             tenant_id=TENANT_ID,
@@ -92,6 +94,7 @@ def test_twilio_inbound_stop_revokes_and_start_reactivates_contact(monkeypatch):
     engine, session, tenant = run(make_sqlite_session())
     try:
         monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
         phone = normalize_phone_number("+15551234567")
         contact = ApproverContact(
             tenant_id=TENANT_ID,

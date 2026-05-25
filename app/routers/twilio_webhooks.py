@@ -20,7 +20,10 @@ async def _verified_form(request: Request):
     signature = request.headers.get("X-Twilio-Signature", "")
     if settings.TWILIO_AUTH_TOKEN:
         validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
-        if not validator.validate(str(request.url), params, signature):
+        validation_url = f"{settings.PUBLIC_API_URL.rstrip('/')}{request.url.path}"
+        if request.url.query:
+            validation_url = f"{validation_url}?{request.url.query}"
+        if not validator.validate(validation_url, params, signature):
             raise HTTPException(401, "Invalid Twilio signature")
     return params
 
