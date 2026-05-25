@@ -30,6 +30,7 @@ def reset_settings(monkeypatch):
     monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "")
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "")
     monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "")
+    monkeypatch.setattr(settings, "TWILIO_MESSAGING_SERVICE_SID", "", raising=False)
     monkeypatch.setattr(settings, "RESEND_API_KEY", "")
     monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://app.pauseapi.app")
 
@@ -67,12 +68,39 @@ async def test_send_sms_posts_twilio_message_for_sms_approvers(monkeypatch):
                         "Sentinel approval needed: transfer_funds\n"
                         "Risk: high\n"
                         "Approve: https://app.pauseapi.app/approve/act_123?d=approved&t=approved_token\n"
-                        "Reject: https://app.pauseapi.app/approve/act_123?d=rejected&t=rejected_token"
+                        "Reject: https://app.pauseapi.app/approve/act_123?d=rejected&t=rejected_token\n"
+                        "Reply STOP to opt out, HELP for help."
                     ),
                 },
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_send_sms_uses_messaging_service_when_configured(monkeypatch):
+    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
+    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+    monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "")
+    monkeypatch.setattr(settings, "TWILIO_MESSAGING_SERVICE_SID", "MG123", raising=False)
+    monkeypatch.setattr(
+        notifications,
+        "create_decision_token",
+        lambda action_id, decision, expires_in_seconds: f"{decision}_token",
+        raising=False,
+    )
+    approval = SimpleNamespace(
+        id="act_123",
+        function_name="transfer_funds",
+        risk_level="high",
+        approvers=["sms:+15551234567"],
+        timeout_seconds=300,
+    )
+
+    await notifications.dispatch_approval_notifications(approval, tenant=None)
+
+    assert FakeAsyncClient.requests[0][1]["data"]["MessagingServiceSid"] == "MG123"
+    assert "From" not in FakeAsyncClient.requests[0][1]["data"]
 
 
 @pytest.mark.asyncio

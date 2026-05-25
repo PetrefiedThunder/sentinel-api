@@ -59,7 +59,8 @@ async def _send_sms(approval, tenant):
     account_sid = settings.TWILIO_ACCOUNT_SID
     auth_token = settings.TWILIO_AUTH_TOKEN
     from_number = settings.TWILIO_FROM_NUMBER
-    if not account_sid or not auth_token or not from_number:
+    messaging_service_sid = settings.TWILIO_MESSAGING_SERVICE_SID
+    if not account_sid or not auth_token or not (from_number or messaging_service_sid):
         return
     recipients: list[str] = []
     for approver in approval.approvers or []:
@@ -74,7 +75,8 @@ async def _send_sms(approval, tenant):
             f"Sentinel approval needed: {approval.function_name}\n"
             f"Risk: {approval.risk_level}\n"
             f"Approve: {approve_url}\n"
-            f"Reject: {reject_url}"
+            f"Reject: {reject_url}\n"
+            "Reply STOP to opt out, HELP for help."
         )
         url = (
             "https://api.twilio.com/2010-04-01/Accounts/"
@@ -82,10 +84,18 @@ async def _send_sms(approval, tenant):
         )
         async with httpx.AsyncClient(timeout=10.0) as client:
             for recipient in recipients:
+                message_data = {
+                    "To": recipient,
+                    "Body": body,
+                }
+                if messaging_service_sid:
+                    message_data["MessagingServiceSid"] = messaging_service_sid
+                else:
+                    message_data["From"] = from_number
                 await client.post(
                     url,
                     auth=(account_sid, auth_token),
-                    data={"From": from_number, "To": recipient, "Body": body},
+                    data=message_data,
                 )
     except Exception as e:
         logger.warning("sms notify failed: %s", e)
