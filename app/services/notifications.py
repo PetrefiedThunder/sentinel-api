@@ -22,7 +22,9 @@ async def dispatch_approval_notifications(approval, tenant):
 
 async def _send_slack(approval, tenant):
     token = settings.SLACK_BOT_TOKEN
+    print(f"[slack] dispatch for {approval.id} token={bool(token)} channel={settings.SLACK_CHANNEL!r}", flush=True)
     if not token:
+        print("[slack] skip: no token", flush=True)
         return
     channel = settings.SLACK_CHANNEL or ""
     if not channel:
@@ -67,7 +69,7 @@ async def _send_slack(approval, tenant):
             },
         ]
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
+            resp = await client.post(
                 "https://slack.com/api/chat.postMessage",
                 headers={
                     "Authorization": f"Bearer {token}",
@@ -79,7 +81,9 @@ async def _send_slack(approval, tenant):
                     "text": f"Approval needed: {approval.function_name}",
                 },
             )
+        print(f"[slack] post status={resp.status_code} body={resp.text[:200]}", flush=True)
     except Exception as e:
+        print(f"[slack] EXCEPTION: {type(e).__name__}: {e}", flush=True)
         logger.warning("slack notify failed: %s", e)
 
 
