@@ -20,6 +20,7 @@ class Tenant(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("ten"))
     name: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    default_approvers: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

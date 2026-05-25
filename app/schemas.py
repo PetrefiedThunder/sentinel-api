@@ -37,24 +37,14 @@ class ApprovalCreate(BaseModel):
     approvers: list[str] = []
     timeout_seconds: int = 300
 
-    @model_validator(mode="before")
-    @classmethod
-    def _fill_default_approvers(cls, data):
-        """If caller provided no approvers, fall back to DEFAULT_APPROVERS env var."""
-        if not isinstance(data, dict):
-            return data
-        approvers = data.get("approvers") or []
-        if not any(isinstance(x, str) and x.strip() for x in approvers):
-            data["approvers"] = list(settings.default_approvers_list)
-        return data
-
     @field_validator("approvers")
     @classmethod
-    def _non_empty_approvers(cls, v: list[str]) -> list[str]:
+    def _validate_approvers(cls, v: list[str]) -> list[str]:
+        """Strip whitespace + format-check; empty list is OK here (per-tenant
+        / global defaults are applied in the service layer where we have
+        tenant context)."""
         approvers = [x.strip() for x in v if isinstance(x, str) and x.strip()]
-        if not approvers:
-            raise ValueError(APPROVER_HELP)
-        if any(not _is_supported_approver(approver) for approver in approvers):
+        if any(not _is_supported_approver(a) for a in approvers):
             raise ValueError(APPROVER_HELP)
         return approvers
 
@@ -98,6 +88,11 @@ class DecisionRequest(BaseModel):
 
 class TokenDecisionRequest(BaseModel):
     token: str
+
+
+class TenantSettingsUpdate(BaseModel):
+    """Mutable tenant settings. All fields optional — only those set are touched."""
+    default_approvers: list[str] | None = None
 
 
 class AuditEventCreate(BaseModel):

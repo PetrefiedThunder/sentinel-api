@@ -3,8 +3,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.routers import approver_contacts, approvals, audit, tenants, twilio_webhooks
 from app.services.decision_bus import bus
+
+# Initialize Sentry as early as possible so import-time errors are captured too.
+if settings.SENTRY_DSN:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.SENTRY_ENVIRONMENT,
+        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,  # never send phone/email/approval payloads
+        max_breadcrumbs=50,
+    )
 
 
 @asynccontextmanager
