@@ -1,6 +1,7 @@
+import asyncio
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,10 +42,11 @@ def _serialize(a: Approval) -> dict:
 @router.post("")
 async def create(
     payload: ApprovalCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    approval = await create_approval(db, tenant, payload)
+    approval = await create_approval(db, tenant, payload, background_tasks=background_tasks)
     return {"action_id": approval.id, "status": approval.decision, **_serialize(approval)}
 
 
@@ -60,6 +62,34 @@ async def list_approvals(
     stmt = stmt.order_by(Approval.created_at.desc()).limit(200)
     result = await db.execute(stmt)
     return [_serialize(a) for a in result.scalars().all()]
+
+
+@router.get("/{action_id}/wait")
+async def wait_for_decision(
+    action_id: str,
+    timeout: float = Query(30, ge=1, le=300, description="Seconds to wait for a decision"),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Long-poll for a decision. Returns immediately if already decided, otherwise
+    polls the DB every 250ms server-side up to `timeout` seconds and returns the
+    moment the decision is recorded. Caller pays 1 RTT instead of many.
+    """
+    approval = await db.get(Approval, action_id)
+    if not approval or approval.tenant_id != tenant.id:
+        raise HTTPException(404, "Not found")
+    if approval.decision != "pending":
+        return _serialize(approval)
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    poll_interval = 0.25
+    while True:
+        await asyncio.sleep(poll_interval)
+        await db.refresh(approval)
+        if approval.decision != "pending":
+            return _serialize(approval)
+        if asyncio.get_event_loop().time() >= deadline:
+            return _serialize(approval)  # still pending; caller can re-call
 
 
 @router.get("/{action_id}")
