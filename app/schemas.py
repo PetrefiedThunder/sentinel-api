@@ -91,3 +91,37 @@ class AuditEventCreate(BaseModel):
     action_id: str
     execution_result: str
     error: str | None = None
+
+
+class ApproverContactCreate(BaseModel):
+    channel: str = "sms"
+    phone_number: str
+    display_name: str | None = None
+    consent_attested: bool = False
+    consent_source: str = "dashboard"
+    consent_note: str | None = None
+
+    @field_validator("channel")
+    @classmethod
+    def _sms_only(cls, v: str) -> str:
+        if v != "sms":
+            raise ValueError("only sms contacts are supported")
+        return v
+
+
+class ApproverContactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    channel: str
+    phone_number: str
+    destination_last4: str
+    display_name: str | None = None
+    consent_status: str
+    consent_source: str
+    consent_note: str | None = None
+    consented_at: datetime | None = None
+    revoked_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime

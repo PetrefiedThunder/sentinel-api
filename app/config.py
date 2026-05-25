@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     TWILIO_MESSAGING_SERVICE_SID: str = ""
     RESEND_API_KEY: str = ""
     PUBLIC_APP_URL: str = "https://app.pauseapi.app"
+    PUBLIC_API_URL: str = "https://api.pauseapi.app"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

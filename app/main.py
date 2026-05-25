@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import approvals, audit, tenants
+from app.routers import approver_contacts, approvals, audit, tenants, twilio_webhooks
 from app.services.decision_bus import bus
 
 
@@ -32,7 +32,9 @@ app.add_middleware(
 
 app.include_router(tenants.router, prefix="/v1/tenants", tags=["tenants"])
 app.include_router(approvals.router, prefix="/v1/approvals", tags=["approvals"])
+app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tags=["approver-contacts"])
 app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
+app.include_router(twilio_webhooks.router)
 
 
 @app.get("/health")

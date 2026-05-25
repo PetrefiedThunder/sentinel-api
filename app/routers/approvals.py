@@ -12,6 +12,7 @@ from app.schemas import ApprovalCreate, DecisionRequest, TokenDecisionRequest
 from app.services.approval_service import create_approval
 from app.services.approval_tokens import InvalidApprovalToken, verify_decision_token
 from app.services.audit_log import append_audit_event
+from app.services.contacts import find_active_sms_contact, sms_approver_phone
 from app.services.decision_bus import bus, notify_decision
 
 router = APIRouter()
@@ -47,6 +48,10 @@ async def create(
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
+    for approver in payload.approvers:
+        phone = sms_approver_phone(approver)
+        if phone and not await find_active_sms_contact(db, tenant.id, phone):
+            raise HTTPException(400, "SMS approver requires active SMS consent contact")
     approval = await create_approval(db, tenant, payload, background_tasks=background_tasks)
     return {"action_id": approval.id, "status": approval.decision, **_serialize(approval)}
 
