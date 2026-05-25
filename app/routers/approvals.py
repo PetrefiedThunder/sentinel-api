@@ -12,6 +12,7 @@ from app.schemas import ApprovalCreate, DecisionRequest, TokenDecisionRequest
 from app.services.approval_service import create_approval
 from app.services.approval_tokens import InvalidApprovalToken, verify_decision_token
 from app.services.audit_log import append_audit_event
+from app.services.decision_bus import bus, notify_decision
 
 router = APIRouter()
 
@@ -71,9 +72,8 @@ async def wait_for_decision(
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    """Long-poll for a decision. Returns immediately if already decided, otherwise
-    polls the DB every 250ms server-side up to `timeout` seconds and returns the
-    moment the decision is recorded. Caller pays 1 RTT instead of many.
+    """Long-poll for a decision. Uses Postgres LISTEN/NOTIFY for sub-100ms
+    detection, with a 100ms DB fallback poll to handle missed notifications.
     """
     approval = await db.get(Approval, action_id)
     if not approval or approval.tenant_id != tenant.id:
@@ -82,14 +82,23 @@ async def wait_for_decision(
         return _serialize(approval)
 
     deadline = asyncio.get_event_loop().time() + timeout
-    poll_interval = 0.25
+    poll_interval = 0.1
+    # Race: NOTIFY-wait against a poll loop. Whichever wakes first wins.
     while True:
-        await asyncio.sleep(poll_interval)
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            return _serialize(approval)
+        wait_window = min(remaining, 5.0)  # cap each NOTIFY-wait at 5s
+        notify_task = asyncio.create_task(bus.wait_for(action_id, wait_window))
+        poll_task = asyncio.create_task(asyncio.sleep(poll_interval))
+        done, pending = await asyncio.wait(
+            {notify_task, poll_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in pending:
+            t.cancel()
         await db.refresh(approval)
         if approval.decision != "pending":
             return _serialize(approval)
-        if asyncio.get_event_loop().time() >= deadline:
-            return _serialize(approval)  # still pending; caller can re-call
 
 
 @router.get("/{action_id}")
@@ -127,6 +136,7 @@ async def decide(
     await append_audit_event(
         db, tenant.id, approval.id, f"decision:{payload.decision}"
     )
+    await notify_decision(db, approval.id)
     return _serialize(approval)
 
 
@@ -156,4 +166,5 @@ async def decide_with_token(
     await append_audit_event(
         db, approval.tenant_id, approval.id, f"decision:{decision}"
     )
+    await notify_decision(db, approval.id)
     return _serialize(approval)
