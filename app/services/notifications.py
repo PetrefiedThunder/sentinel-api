@@ -60,7 +60,8 @@ async def _send_email(approval, tenant):
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "from": "Sentinel <onboarding@resend.dev>",
+                    "from": settings.EMAIL_FROM or "Sentinel <approvals@regengine.co>",
+                    "reply_to": settings.EMAIL_REPLY_TO or "support@regengine.co",
                     "to": recipients,
                     "subject": f"Approval needed: {approval.function_name}",
                     "html": html,
