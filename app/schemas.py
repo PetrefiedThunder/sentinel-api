@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+from app.config import settings
 
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
 APPROVER_HELP = (
@@ -34,6 +36,17 @@ class ApprovalCreate(BaseModel):
     risk_level: str = "medium"
     approvers: list[str] = []
     timeout_seconds: int = 300
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_default_approvers(cls, data):
+        """If caller provided no approvers, fall back to DEFAULT_APPROVERS env var."""
+        if not isinstance(data, dict):
+            return data
+        approvers = data.get("approvers") or []
+        if not any(isinstance(x, str) and x.strip() for x in approvers):
+            data["approvers"] = list(settings.default_approvers_list)
+        return data
 
     @field_validator("approvers")
     @classmethod

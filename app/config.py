@@ -14,8 +14,15 @@ class Settings(BaseSettings):
     EMAIL_REPLY_TO: str = ""
     PUBLIC_APP_URL: str = "https://app.pauseapi.app"
     PUBLIC_API_URL: str = "https://api.pauseapi.app"
+    # Comma-separated list of approver strings (email or sms:+1...). Used when the
+    # caller's `approvers` list is empty — so the system always has a fallback recipient.
+    DEFAULT_APPROVERS: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def default_approvers_list(self) -> list[str]:
+        return [a.strip() for a in self.DEFAULT_APPROVERS.split(",") if a.strip()]
 
 
 settings = Settings()
