@@ -16,5 +16,5 @@ async def create_approval(db, tenant, payload):
     db.add(approval)
     await db.commit()
     await db.refresh(approval)
-    asyncio.create_task(dispatch_approval_notifications(approval, tenant))
+    await dispatch_approval_notifications(approval, tenant)
     return approval
