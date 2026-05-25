@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
 
 
 class TenantSignup(BaseModel):
@@ -20,6 +22,30 @@ class ApprovalCreate(BaseModel):
     risk_level: str = "medium"
     approvers: list[str] = []
     timeout_seconds: int = 300
+
+    @field_validator("approvers")
+    @classmethod
+    def _non_empty_approvers(cls, v: list[str]) -> list[str]:
+        if not v or not any(isinstance(x, str) and x.strip() for x in v):
+            raise ValueError(
+                "approvers must be a non-empty list. "
+                "Use email (e.g. 'alice@acme.com'), 'slack://channel/C123', or 'sms:+15551234567'."
+            )
+        return v
+
+    @field_validator("risk_level")
+    @classmethod
+    def _valid_risk(cls, v: str) -> str:
+        if v not in VALID_RISK_LEVELS:
+            raise ValueError(f"risk_level must be one of {sorted(VALID_RISK_LEVELS)}")
+        return v
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _positive_timeout(cls, v: int) -> int:
+        if v < 1 or v > 86400:
+            raise ValueError("timeout_seconds must be between 1 and 86400")
+        return v
 
 
 class ApprovalResponse(BaseModel):
