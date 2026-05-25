@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_FROM_NUMBER: str = ""
     RESEND_API_KEY: str = ""
+    SLACK_BOT_TOKEN: str = ""
+    SLACK_SIGNING_SECRET: str = ""
+    SLACK_CHANNEL: str = ""
     PUBLIC_APP_URL: str = "https://app.pauseapi.app"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
