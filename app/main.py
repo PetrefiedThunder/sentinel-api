@@ -23,6 +23,26 @@ app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 
 
+@app.get("/_debug/slack")
+async def _debug_slack():
+    import httpx
+    from app.config import settings as s
+    token = s.SLACK_BOT_TOKEN
+    channel = s.SLACK_CHANNEL
+    if not token:
+        return {"error": "no token", "channel_env": channel}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://slack.com/api/chat.postMessage",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"},
+                json={"channel": channel or "C0AK369AEUE", "text": "[debug] direct from /_debug/slack"},
+            )
+        return {"status": r.status_code, "body": r.text[:500], "channel": channel, "code_version": "debug-v2"}
+    except Exception as e:
+        return {"exception": f"{type(e).__name__}: {e}", "channel": channel}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
