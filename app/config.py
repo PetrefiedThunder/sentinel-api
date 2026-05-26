@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # caller's `approvers` list is empty — so the system always has a fallback recipient.
     DEFAULT_APPROVERS: str = ""
 
+    ADMIN_TOKEN: str = ""
+
     SENTRY_DSN: str = ""
     SENTRY_ENVIRONMENT: str = "production"
     SENTRY_TRACES_SAMPLE_RATE: float = 0.05
