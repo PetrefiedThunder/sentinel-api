@@ -37,8 +37,6 @@ async def signup(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    # 5 signups per IP per hour. Cheap brake on spam-create + email blast.
-    await rate_limit(request, bucket="signup", limit=5, window_seconds=3600)
     if "@" not in payload.email:
         raise HTTPException(400, "Invalid email")
     domain = payload.email.split("@")[-1].lower()
@@ -46,6 +44,19 @@ async def signup(
         raise HTTPException(
             400, "Work email required (personal email domains not allowed)"
         )
+    # Throttle per IP (5/hour) AND per email-domain (10/hour). Edge proxies
+    # rewrite client IPs through internal NAT, so an IP-only limit is leaky;
+    # the domain limit catches mass signups against one company regardless of
+    # origin IP.
+    await rate_limit(request, bucket="signup", limit=5, window_seconds=3600)
+    await rate_limit(
+        request,
+        bucket="signup-domain",
+        limit=10,
+        window_seconds=3600,
+        key_suffix=domain,
+        by_ip=False,
+    )
     existing = await db.execute(select(Tenant).where(Tenant.email == payload.email))
     if existing.scalar_one_or_none():
         raise HTTPException(400, "Email already registered")

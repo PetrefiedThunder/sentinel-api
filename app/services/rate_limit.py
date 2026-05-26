@@ -50,8 +50,9 @@ async def enforce(
     limit: int,
     window_seconds: int,
     key_suffix: str = "",
+    by_ip: bool = True,
 ) -> None:
-    """Throw 429 if this IP has made more than `limit` requests in `window_seconds`.
+    """Throw 429 if more than `limit` requests in `window_seconds`.
 
     Args:
         bucket: short identifier of the protected route, e.g. "signup".
@@ -59,15 +60,21 @@ async def enforce(
         window_seconds: window length.
         key_suffix: optional extra discriminator (e.g. lowercased email) so the
             same IP using different emails still gets independent counters.
+        by_ip: when True (default), bucket per client IP. Set False to bucket
+            globally on (bucket, key_suffix) — useful when edge proxies rotate
+            client IPs, or when you want to throttle by email-domain alone.
     """
     r = _client()
     if r is None:
         # fail-open: better to allow than 500
         return
 
-    ip = client_ip(request)
-    suffix = f":{key_suffix}" if key_suffix else ""
-    key = f"rl:{bucket}:{ip}{suffix}"
+    parts = ["rl", bucket]
+    if by_ip:
+        parts.append(client_ip(request))
+    if key_suffix:
+        parts.append(key_suffix)
+    key = ":".join(parts)
     try:
         count = await r.incr(key)
         if count == 1:
