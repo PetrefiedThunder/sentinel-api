@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from app.services.onboarding import (
     send_welcome_email,
     verify_token,
 )
+from app.services.rate_limit import enforce as rate_limit
 
 router = APIRouter()
 
@@ -33,8 +34,11 @@ BLOCKED_DOMAINS = {
 async def signup(
     payload: TenantSignup,
     background: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    # 5 signups per IP per hour. Cheap brake on spam-create + email blast.
+    await rate_limit(request, bucket="signup", limit=5, window_seconds=3600)
     if "@" not in payload.email:
         raise HTTPException(400, "Invalid email")
     domain = payload.email.split("@")[-1].lower()
@@ -95,6 +99,7 @@ class RecoverRequest(BaseModel):
 async def recover_request(
     payload: RecoverRequest,
     background: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Step 1: user enters email → we email them a magic link.
@@ -102,6 +107,8 @@ async def recover_request(
     We always return 204, regardless of whether the email matches a real
     tenant, so this endpoint cannot be used to enumerate accounts.
     """
+    # 3 recovery emails per IP per hour. Throttles harassment + cost-bomb.
+    await rate_limit(request, bucket="recover", limit=3, window_seconds=3600)
     email = (payload.email or "").strip().lower()
     if "@" not in email:
         # never reveal whether email exists — always pretend success
@@ -157,6 +164,7 @@ def _serialize_tenant(t: Tenant) -> dict:
         "name": t.name,
         "email": t.email,
         "default_approvers": t.default_approvers or [],
+        "email_verified_at": t.email_verified_at,
         "created_at": t.created_at,
     }
 
