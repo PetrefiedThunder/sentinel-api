@@ -52,6 +52,35 @@ class Approval(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class WebhookEndpoint(Base):
+    __tablename__ = "webhook_endpoints"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("whk"))
+    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(String, nullable=False)
+    secret: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    event_filter: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class WebhookDelivery(Base):
+    __tablename__ = "webhook_deliveries"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("whd"))
+    endpoint_id: Mapped[str] = mapped_column(String, ForeignKey("webhook_endpoints.id"), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    action_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_snippet: Mapped[str | None] = mapped_column(String, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("evt"))

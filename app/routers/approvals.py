@@ -14,6 +14,7 @@ from app.services.approval_tokens import InvalidApprovalToken, verify_decision_t
 from app.services.audit_log import append_audit_event
 from app.services.contacts import find_active_sms_contact, sms_approver_phone
 from app.services.decision_bus import bus, notify_decision
+from app.services.webhooks import dispatch_approval_webhook
 
 router = APIRouter()
 
@@ -142,6 +143,7 @@ async def decide(
         db, tenant.id, approval.id, f"decision:{payload.decision}"
     )
     await notify_decision(db, approval.id)
+    await dispatch_approval_webhook(db, approval)
     return _serialize(approval)
 
 
@@ -172,4 +174,5 @@ async def decide_with_token(
         db, approval.tenant_id, approval.id, f"decision:{decision}"
     )
     await notify_decision(db, approval.id)
+    await dispatch_approval_webhook(db, approval)
     return _serialize(approval)

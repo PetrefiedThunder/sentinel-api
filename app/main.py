@@ -4,7 +4,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import admin, approver_contacts, approvals, audit, tenants, twilio_webhooks
+from app.routers import (
+    admin,
+    approver_contacts,
+    approvals,
+    audit,
+    tenants,
+    twilio_webhooks,
+    webhooks,
+)
 from app.services.decision_bus import bus
 
 # Initialize Sentry as early as possible so import-time errors are captured too.
@@ -47,6 +55,7 @@ app.include_router(approvals.router, prefix="/v1/approvals", tags=["approvals"])
 app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tags=["approver-contacts"])
 app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
 app.include_router(twilio_webhooks.router)
+app.include_router(webhooks.router, prefix="/v1/webhooks", tags=["webhooks"])
 app.include_router(admin.router, prefix="/v1", tags=["admin"])
 
 
