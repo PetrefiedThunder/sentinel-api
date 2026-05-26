@@ -20,6 +20,14 @@ class Settings(BaseSettings):
 
     ADMIN_TOKEN: str = ""
 
+    # Stripe billing — keys come from Stripe dashboard. If empty, billing
+    # endpoints return 503 (feature disabled).
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_PRO: str = ""        # price_... id of the Pro monthly plan
+    STRIPE_SUCCESS_URL: str = "https://app.pauseapi.app/billing?status=success"
+    STRIPE_CANCEL_URL: str = "https://app.pauseapi.app/billing?status=cancelled"
+
     SENTRY_DSN: str = ""
     SENTRY_ENVIRONMENT: str = "production"
     SENTRY_TRACES_SAMPLE_RATE: float = 0.05
