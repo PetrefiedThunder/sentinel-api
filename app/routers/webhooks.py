@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_tenant
 from app.db import get_db
 from app.models import Tenant, WebhookDelivery, WebhookEndpoint
+from app.services.pagination import paginate_stmt
 from app.services.webhooks import generate_secret
 
 router = APIRouter()
@@ -124,18 +125,32 @@ async def disable_webhook(
 @router.get("/deliveries")
 async def list_deliveries(
     endpoint_id: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    cursor: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    """Inspect the most-recent webhook deliveries for this tenant."""
-    stmt = (
-        select(WebhookDelivery)
-        .where(WebhookDelivery.tenant_id == tenant.id)
-        .order_by(desc(WebhookDelivery.created_at))
-        .limit(limit)
-    )
+    """Inspect webhook deliveries for this tenant.
+
+    Backward-compatible: no limit + no cursor → legacy top-50 bare array.
+    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+    """
+    base = select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant.id)
     if endpoint_id:
-        stmt = stmt.where(WebhookDelivery.endpoint_id == endpoint_id)
-    result = await db.execute(stmt)
-    return [_serialize_delivery(d) for d in result.scalars()]
+        base = base.where(WebhookDelivery.endpoint_id == endpoint_id)
+
+    if limit is None and cursor is None:
+        stmt = base.order_by(
+            desc(WebhookDelivery.created_at), desc(WebhookDelivery.id)
+        ).limit(50)
+        result = await db.execute(stmt)
+        return [_serialize_delivery(d) for d in result.scalars()]
+
+    page = await paginate_stmt(
+        db, base, WebhookDelivery, limit=limit or 50, cursor=cursor
+    )
+    return {
+        "data": [_serialize_delivery(d) for d in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }

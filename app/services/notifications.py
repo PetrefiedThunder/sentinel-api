@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 async def dispatch_approval_notifications(approval, tenant, db=None):
+    # Test-mode workspaces never fire real email/SMS — approvals are still
+    # created and decidable via API/dashboard so customers can integrate
+    # safely, but no real human gets paged and no provider cost is incurred.
+    if tenant is not None and getattr(tenant, "mode", "live") == "test":
+        return
     await _send_email(approval, tenant)
     if db is not None or tenant is None:
         await _send_sms(approval, tenant, db)

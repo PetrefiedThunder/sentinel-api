@@ -23,6 +23,14 @@ def _is_supported_approver(value: str) -> bool:
 class TenantSignup(BaseModel):
     name: str
     email: str
+    mode: str = "live"  # "live" | "test" — test workspaces never fire real email/SMS
+
+    @field_validator("mode")
+    @classmethod
+    def _valid_mode(cls, v: str) -> str:
+        if v not in ("live", "test"):
+            raise ValueError("mode must be 'live' or 'test'")
+        return v
 
 
 class TenantSignupResponse(BaseModel):

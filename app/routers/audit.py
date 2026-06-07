@@ -12,6 +12,7 @@ from app.db import get_db
 from app.models import Approval, AuditEvent, Tenant
 from app.schemas import AuditEventCreate
 from app.services.audit_log import append_audit_event
+from app.services.pagination import paginate_stmt
 
 router = APIRouter()
 
@@ -47,16 +48,31 @@ async def emit(
 @router.get("")
 async def list_events(
     action_id: str | None = Query(None, description="Filter to a single action_id"),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int | None = Query(None, ge=1, le=500),
+    cursor: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    stmt = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    """List audit events.
+
+    Backward-compatible: no limit + no cursor → legacy top-100 bare array.
+    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+    """
+    base = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
     if action_id:
-        stmt = stmt.where(AuditEvent.action_id == action_id)
-    stmt = stmt.order_by(AuditEvent.created_at.desc()).limit(limit)
-    result = await db.execute(stmt)
-    return [_serialize(e) for e in result.scalars().all()]
+        base = base.where(AuditEvent.action_id == action_id)
+
+    if limit is None and cursor is None:
+        stmt = base.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(100)
+        result = await db.execute(stmt)
+        return [_serialize(e) for e in result.scalars().all()]
+
+    page = await paginate_stmt(db, base, AuditEvent, limit=limit or 100, cursor=cursor)
+    return {
+        "data": [_serialize(e) for e in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }
 
 
 @router.get(".csv")

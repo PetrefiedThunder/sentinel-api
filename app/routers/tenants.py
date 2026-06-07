@@ -60,10 +60,10 @@ async def signup(
     existing = await db.execute(select(Tenant).where(Tenant.email == payload.email))
     if existing.scalar_one_or_none():
         raise HTTPException(400, "Email already registered")
-    tenant = Tenant(name=payload.name, email=payload.email)
+    tenant = Tenant(name=payload.name, email=payload.email, mode=payload.mode)
     db.add(tenant)
     await db.flush()
-    raw, prefix, key_hash = generate_api_key()
+    raw, prefix, key_hash = generate_api_key(mode=payload.mode)
     api_key = ApiKey(
         tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="default"
     )
@@ -71,10 +71,12 @@ async def signup(
     await db.commit()
     await db.refresh(tenant)
 
-    # Fire-and-forget welcome+verify email — never blocks signup.
-    background.add_task(send_welcome_email, tenant, raw)
+    # Live tenants get the welcome+verify email. Test workspaces don't —
+    # they're for integration testing, not a real human signup.
+    if tenant.mode == "live":
+        background.add_task(send_welcome_email, tenant, raw)
 
-    return {"tenant_id": tenant.id, "api_key": raw}
+    return {"tenant_id": tenant.id, "api_key": raw, "mode": tenant.mode}
 
 
 # ── Email verification ────────────────────────────────────────────────
@@ -176,6 +178,7 @@ def _serialize_tenant(t: Tenant) -> dict:
         "email": t.email,
         "default_approvers": t.default_approvers or [],
         "email_verified_at": t.email_verified_at,
+        "mode": t.mode,
         "created_at": t.created_at,
     }
 

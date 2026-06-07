@@ -13,8 +13,14 @@ def hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def generate_api_key() -> tuple[str, str, str]:
-    raw = f"sk_live_{secrets.token_hex(32)}"
+def generate_api_key(mode: str = "live") -> tuple[str, str, str]:
+    """Issue an API key. mode='live' → sk_live_…, mode='test' → sk_test_…
+
+    Test-mode keys are scoped to a test workspace whose approvals never fire
+    real emails/SMS — see services that gate on tenant.mode.
+    """
+    token_prefix = "sk_test_" if mode == "test" else "sk_live_"
+    raw = f"{token_prefix}{secrets.token_hex(32)}"
     prefix = raw[:11]
     return raw, prefix, hash_key(raw)
 

@@ -23,6 +23,7 @@ class Tenant(Base):
     default_approvers: Mapped[list | None] = mapped_column(JSON, nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     plan: Mapped[str] = mapped_column(String, default="free", server_default="free")
+    mode: Mapped[str] = mapped_column(String, default="live", server_default="live")
     stripe_customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String, nullable=True)
     plan_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

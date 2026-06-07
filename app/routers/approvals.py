@@ -15,6 +15,7 @@ from app.services.audit_log import append_audit_event
 from app.services.contacts import find_active_sms_contact, sms_approver_phone
 from app.services.decision_bus import bus, notify_decision
 from app.services.idempotency import run_with_idempotency
+from app.services.pagination import paginate_stmt
 from app.services.webhooks import dispatch_approval_webhook
 
 router = APIRouter()
@@ -85,15 +86,33 @@ async def create(
 @router.get("")
 async def list_approvals(
     status: str | None = None,
+    limit: int | None = Query(None, ge=1, le=100),
+    cursor: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    stmt = select(Approval).where(Approval.tenant_id == tenant.id)
+    """List approvals.
+
+    Backward-compatible: with no `limit` and no `cursor`, returns the legacy
+    top-200 bare array. With either present, returns the cursor-paginated
+    envelope {data, has_more, next_cursor}.
+    """
+    base = select(Approval).where(Approval.tenant_id == tenant.id)
     if status:
-        stmt = stmt.where(Approval.decision == status)
-    stmt = stmt.order_by(Approval.created_at.desc()).limit(200)
-    result = await db.execute(stmt)
-    return [_serialize(a) for a in result.scalars().all()]
+        base = base.where(Approval.decision == status)
+
+    if limit is None and cursor is None:
+        # Legacy shape — don't break existing SDK clients
+        stmt = base.order_by(Approval.created_at.desc(), Approval.id.desc()).limit(200)
+        result = await db.execute(stmt)
+        return [_serialize(a) for a in result.scalars().all()]
+
+    page = await paginate_stmt(db, base, Approval, limit=limit or 50, cursor=cursor)
+    return {
+        "data": [_serialize(a) for a in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }
 
 
 @router.get("/{action_id}/wait")
