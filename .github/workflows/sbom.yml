@@ -1,0 +1,63 @@
+name: sbom
+
+# Software Bill of Materials for each tagged release.
+# Enterprise buyers require this for compliance (SOC 2, FedRAMP, BSI C5).
+#
+# Produces a CycloneDX-format SBOM with every transitive dependency, license,
+# and vulnerability surface, then uploads it as a release asset alongside
+# the source tarball.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to generate SBOM for (defaults to latest)'
+        required: false
+
+permissions:
+  contents: write   # to attach the SBOM to the release
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          syft . \
+            -o cyclonedx-json=sbom-${{ github.ref_name }}.cdx.json \
+            -o spdx-json=sbom-${{ github.ref_name }}.spdx.json
+          # spdx-json is the format GitHub's Dependency graph ingests;
+          # cyclonedx is what enterprise security teams expect
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sbom-${{ github.ref_name }}.cdx.json
+            sbom-${{ github.ref_name }}.spdx.json
+
+      - name: Upload as workflow artifact (dispatch case)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.ref_name }}
+          path: |
+            sbom-*.cdx.json
+            sbom-*.spdx.json
+          retention-days: 90
