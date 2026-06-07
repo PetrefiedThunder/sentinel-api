@@ -63,10 +63,14 @@ async def enforce(
         by_ip: when True (default), bucket per client IP. Set False to bucket
             globally on (bucket, key_suffix) — useful when edge proxies rotate
             client IPs, or when you want to throttle by email-domain alone.
+
+    Side effect: stashes the latest (limit, remaining, reset_in) onto
+    `request.state.rate_limit_headers` so the response middleware can
+    surface X-RateLimit-* headers — Stripe-style ergonomics.
     """
     r = _client()
     if r is None:
-        # fail-open: better to allow than 500
+        # fail-open: better to allow than 500. Skip header surfacing too.
         return
 
     parts = ["rl", bucket]
@@ -79,17 +83,34 @@ async def enforce(
         count = await r.incr(key)
         if count == 1:
             await r.expire(key, window_seconds)
+        ttl_raw = await r.ttl(key)
+        ttl = window_seconds if (ttl_raw is None or ttl_raw < 0) else ttl_raw
+        remaining = max(0, limit - count)
+
+        # Stash for response middleware. Last-bucket-checked wins; if a
+        # handler enforces several buckets, the tightest is most useful —
+        # callers should call the most-restrictive bucket LAST.
+        request.state.rate_limit_headers = {
+            "X-RateLimit-Limit": str(limit),
+            "X-RateLimit-Remaining": str(remaining),
+            "X-RateLimit-Reset": str(ttl),
+            "X-RateLimit-Bucket": bucket,
+        }
+
         if count > limit:
-            retry_after = await r.ttl(key)
-            if retry_after is None or retry_after < 0:
-                retry_after = window_seconds
             raise HTTPException(
                 status_code=429,
                 detail=(
                     f"Rate limit exceeded for {bucket}. "
-                    f"Try again in {retry_after} seconds."
+                    f"Try again in {ttl} seconds."
                 ),
-                headers={"Retry-After": str(retry_after)},
+                headers={
+                    "Retry-After": str(ttl),
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(ttl),
+                    "X-RateLimit-Bucket": bucket,
+                },
             )
     except HTTPException:
         raise

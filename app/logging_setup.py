@@ -107,6 +107,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 status_code=response.status_code,
             )
             response.headers["X-Request-Id"] = request_id
+            # Surface rate-limit context if the handler enforced a bucket
+            rl = getattr(request.state, "rate_limit_headers", None)
+            if isinstance(rl, dict):
+                for k, v in rl.items():
+                    response.headers[k] = v
             return response
         finally:
             _request_ctx.reset(token)

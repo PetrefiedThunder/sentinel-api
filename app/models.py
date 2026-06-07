@@ -56,6 +56,18 @@ class Approval(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class IdempotencyKey(Base):
+    __tablename__ = "idempotency_keys"
+    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    method: Mapped[str] = mapped_column(String(10), nullable=False)
+    path: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class WebhookEndpoint(Base):
     __tablename__ = "webhook_endpoints"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("whk"))

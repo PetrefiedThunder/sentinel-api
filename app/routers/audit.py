@@ -1,4 +1,9 @@
+import csv
+import io
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,3 +57,66 @@ async def list_events(
     stmt = stmt.order_by(AuditEvent.created_at.desc()).limit(limit)
     result = await db.execute(stmt)
     return [_serialize(e) for e in result.scalars().all()]
+
+
+@router.get(".csv")
+async def export_csv(
+    action_id: str | None = Query(None, description="Filter to a single action_id"),
+    limit: int = Query(10_000, ge=1, le=100_000),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Stream audit events as CSV for offline analysis / compliance reviews.
+
+    Customers ask for this constantly during procurement — they want to ingest
+    the audit log into their own SIEM. Keep the column set stable; downstream
+    parsers depend on the header row.
+    """
+    stmt = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    if action_id:
+        stmt = stmt.where(AuditEvent.action_id == action_id)
+    stmt = stmt.order_by(AuditEvent.created_at.asc()).limit(limit)
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(
+            [
+                "id",
+                "action_id",
+                "created_at_utc",
+                "execution_result_json",
+                "error",
+                "prev_hash",
+                "event_hash",
+            ]
+        )
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        for e in rows:
+            writer.writerow(
+                [
+                    e.id,
+                    e.action_id,
+                    e.created_at.isoformat() if e.created_at else "",
+                    json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
+                    e.error or "",
+                    e.prev_hash or "",
+                    e.event_hash or "",
+                ]
+            )
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="audit-{tenant.id}.csv"',
+        },
+    )

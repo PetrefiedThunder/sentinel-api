@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from app.services.approval_tokens import InvalidApprovalToken, verify_decision_t
 from app.services.audit_log import append_audit_event
 from app.services.contacts import find_active_sms_contact, sms_approver_phone
 from app.services.decision_bus import bus, notify_decision
+from app.services.idempotency import run_with_idempotency
 from app.services.webhooks import dispatch_approval_webhook
 
 router = APIRouter()
@@ -48,13 +49,37 @@ async def create(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    for approver in payload.approvers:
-        phone = sms_approver_phone(approver)
-        if phone and not await find_active_sms_contact(db, tenant.id, phone):
-            raise HTTPException(400, "SMS approver requires active SMS consent contact")
-    approval = await create_approval(db, tenant, payload, background_tasks=background_tasks)
-    return {"action_id": approval.id, "status": approval.decision, **_serialize(approval)}
+    """Create an approval. Pass `Idempotency-Key: <opaque>` to make retries
+    safe — the same key replays the original response without firing
+    duplicate emails or creating duplicate rows."""
+
+    async def _do_create() -> dict:
+        for approver in payload.approvers:
+            phone = sms_approver_phone(approver)
+            if phone and not await find_active_sms_contact(db, tenant.id, phone):
+                raise HTTPException(
+                    400, "SMS approver requires active SMS consent contact"
+                )
+        approval = await create_approval(
+            db, tenant, payload, background_tasks=background_tasks
+        )
+        return {
+            "action_id": approval.id,
+            "status": approval.decision,
+            **_serialize(approval),
+        }
+
+    return await run_with_idempotency(
+        db,
+        tenant_id=tenant.id,
+        idempotency_key=idempotency_key,
+        method="POST",
+        path="/v1/approvals",
+        request_body=payload.model_dump(),
+        handler=_do_create,
+    )
 
 
 @router.get("")
