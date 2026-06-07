@@ -20,6 +20,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "twilio>=9.0",
     "sentry-sdk[fastapi]>=2.0",
+    "structlog>=24.4",
 ]
 
 [project.optional-dependencies]

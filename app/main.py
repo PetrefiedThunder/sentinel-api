@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.logging_setup import RequestContextMiddleware, configure_logging
 from app.routers import (
     admin,
     approver_contacts,
@@ -15,6 +16,9 @@ from app.routers import (
     webhooks,
 )
 from app.services.decision_bus import bus
+
+# Configure structured (JSON) logging first so anything below logs as JSON.
+configure_logging(level="INFO")
 
 # Initialize Sentry as early as possible so import-time errors are captured too.
 if settings.SENTRY_DSN:
@@ -38,6 +42,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
+
+# Request context — stamps request_id + method + route on every log line,
+# emits a structured "request.completed" record. Must be added BEFORE the
+# CORS middleware so it wraps the inner handler chain.
+app.add_middleware(RequestContextMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

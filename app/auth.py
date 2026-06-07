@@ -36,4 +36,7 @@ async def get_current_tenant(
     tenant = await db.get(Tenant, api_key.tenant_id)
     if not tenant:
         raise HTTPException(status_code=401, detail="Tenant not found")
+    # Stamp tenant_id on every subsequent log line in this request
+    from app.logging_setup import bind_request_context
+    bind_request_context(tenant_id=tenant.id, api_key_id=api_key.id)
     return tenant
