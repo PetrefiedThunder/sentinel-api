@@ -126,6 +126,8 @@ Claims in this document were checked against code on 2026-06-07:
 - ✅ Decision-state replay guard: `app/routers/approvals.py` `decide_with_token` → `if approval.decision != "pending": raise 400`
 - ✅ Stripe signature verify: `app/routers/billing.py:_verify_stripe_signature`
 - ✅ Webhook signing: `app/services/webhooks.py:sign_body`
-- ✅ Hash-chained audit: `app/services/audit_log.py`
+- ✅ Hash-chained audit: `app/services/audit_log.py` — appends serialized per tenant via pg_advisory_xact_lock since 2026-06-10
+- ✅ Chain verification endpoint: `GET /v1/audit-events/verify` (read-only, customer-callable)
+- 📌 2026-06-10 incident: the verify endpoint found 2 chain forks in production, caused by a concurrent-append race (no lock, no id tiebreak). Fix: advisory lock + deterministic head selection. The historical chain was rebuilt ONCE in canonical order via a temporary admin endpoint (added in 46d3e7a, removed immediately after the single run — see git history). All data at the time was pre-customer test data; no customer chain has ever been rewritten.
 - ⚠️ Origin edge-secret: NOT implemented (residual #4)
 - ⚠️ RFC 3161 timestamping: column staged (migration 009), integration roadmapped (residual #3)
