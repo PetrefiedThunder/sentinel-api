@@ -1,7 +1,7 @@
 from sqlalchemy import select
+from test_support import client_for, make_sqlite_session, run
 
 from app.models import ApproverContact
-from test_support import client_for, make_sqlite_session, run
 
 
 def test_contact_api_requires_explicit_sms_consent_attestation():

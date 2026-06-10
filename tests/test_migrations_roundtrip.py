@@ -15,15 +15,14 @@ upgrade head` on the container start in Dockerfile CMD.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
+from alembic import command
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"

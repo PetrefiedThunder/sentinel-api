@@ -200,7 +200,7 @@ async def decide_with_token(
     try:
         decision = verify_decision_token(payload.token, action_id)
     except (InvalidApprovalToken, ValueError):
-        raise HTTPException(401, "Invalid or expired approval token")
+        raise HTTPException(401, "Invalid or expired approval token") from None
 
     approval = await db.get(Approval, action_id)
     if not approval:

@@ -9,7 +9,6 @@ from app.db import Base, get_db
 from app.main import app
 from app.models import Tenant
 
-
 TENANT_ID = "ten_test"
 
 

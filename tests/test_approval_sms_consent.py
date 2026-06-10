@@ -1,6 +1,7 @@
+from test_support import TENANT_ID, client_for, make_sqlite_session, run
+
 from app.models import ApproverContact
 from app.services.contacts import destination_hash, normalize_phone_number
-from test_support import TENANT_ID, client_for, make_sqlite_session, run
 
 
 def test_create_approval_rejects_unregistered_sms_approver():

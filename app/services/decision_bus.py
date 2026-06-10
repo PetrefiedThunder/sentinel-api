@@ -15,9 +15,9 @@ broker degrades to a no-op and `/wait` falls back to its 100ms DB poll.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
-from typing import Optional
 
 import asyncpg
 
@@ -38,7 +38,7 @@ class DecisionBus:
     def __init__(self) -> None:
         self._waiters: dict[str, set[asyncio.Event]] = {}
         self._lock = asyncio.Lock()
-        self._conn: Optional[asyncpg.Connection] = None
+        self._conn: asyncpg.Connection | None = None
         self._started = False
 
     async def start(self) -> None:
@@ -55,14 +55,10 @@ class DecisionBus:
 
     async def stop(self) -> None:
         if self._conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._conn.remove_listener(CHANNEL, self._on_notify)
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 await self._conn.close()
-            except Exception:
-                pass
             self._conn = None
         self._started = False
 
@@ -87,7 +83,7 @@ class DecisionBus:
             try:
                 await asyncio.wait_for(ev.wait(), timeout=timeout)
                 return True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return False
         finally:
             async with self._lock:

@@ -8,7 +8,6 @@ rather risk a brief abuse window than take signup offline.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import HTTPException, Request
 from redis.asyncio import Redis
@@ -17,10 +16,10 @@ from app.config import settings
 
 log = logging.getLogger(__name__)
 
-_redis: Optional[Redis] = None
+_redis: Redis | None = None
 
 
-def _client() -> Optional[Redis]:
+def _client() -> Redis | None:
     global _redis
     if _redis is None:
         try:

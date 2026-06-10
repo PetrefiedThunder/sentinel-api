@@ -19,10 +19,10 @@ import base64
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -46,7 +46,7 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
 class Page:
     items: list[Any]
     has_more: bool
-    next_cursor: Optional[str]
+    next_cursor: str | None
 
 
 async def paginate_stmt(
@@ -55,7 +55,7 @@ async def paginate_stmt(
     model,
     *,
     limit: int,
-    cursor: Optional[str],
+    cursor: str | None,
 ) -> Page:
     """Apply descending (created_at, id) keyset pagination to `base_stmt`.
 

@@ -1,8 +1,8 @@
 from sqlalchemy import update
+from test_support import TENANT_ID, client_for, make_sqlite_session, run
 
 from app.models import AuditEvent
 from app.services.audit_log import append_audit_event
-from test_support import TENANT_ID, client_for, make_sqlite_session, run
 
 
 async def _build_chain(session, n):

@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
+from test_support import client_for, make_sqlite_session, run
 
 from app.config import settings
 from app.models import UptimeProbe
-from test_support import client_for, make_sqlite_session, run
 
 ADMIN_TOKEN = "test-admin-token"
 
