@@ -1,9 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-
-from app.config import settings
+from pydantic import BaseModel, ConfigDict, field_validator
 
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
 APPROVER_HELP = (

@@ -28,6 +28,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "aiosqlite>=0.20",
+    "ruff>=0.8",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -39,7 +40,9 @@ target-version = "py311"
 extend-exclude = ["dist", "build", ".venv", "alembic/versions"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "C4", "UP", "SIM", "TCH"]
+# TCH omitted: FastAPI resolves endpoint annotations at runtime, so moving
+# imports like AsyncSession into TYPE_CHECKING blocks breaks Depends().
+select = ["E", "F", "W", "I", "B", "C4", "UP", "SIM"]
 ignore = [
     "E501",  # formatter handles line length
     "B008",  # FastAPI Depends() in defaults

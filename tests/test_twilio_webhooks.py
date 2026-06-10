@@ -1,10 +1,10 @@
-from twilio.request_validator import RequestValidator
 from sqlalchemy import select
+from test_support import TENANT_ID, client_for, make_sqlite_session, run
+from twilio.request_validator import RequestValidator
 
 from app.config import settings
 from app.models import Approval, ApproverContact, AuditEvent, NotificationAttempt
 from app.services.contacts import destination_hash, normalize_phone_number
-from test_support import TENANT_ID, client_for, make_sqlite_session, run
 
 
 def _signature(url: str, params: dict[str, str], token: str) -> str:

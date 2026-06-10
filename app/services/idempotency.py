@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,7 +38,7 @@ async def run_with_idempotency(
     db: AsyncSession,
     *,
     tenant_id: str,
-    idempotency_key: Optional[str],
+    idempotency_key: str | None,
     method: str,
     path: str,
     request_body: Any,

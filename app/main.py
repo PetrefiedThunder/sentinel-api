@@ -7,8 +7,8 @@ from app.config import settings
 from app.logging_setup import RequestContextMiddleware, configure_logging
 from app.routers import (
     admin,
-    approver_contacts,
     approvals,
+    approver_contacts,
     audit,
     billing,
     status_history,

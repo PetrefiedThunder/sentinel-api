@@ -5,7 +5,6 @@ Authenticated with the standard per-tenant API key (Authorization: Bearer sk_liv
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -26,8 +25,8 @@ ALLOWED_EVENTS = {"approval.approved", "approval.rejected"}
 
 class CreateWebhookRequest(BaseModel):
     url: str
-    description: Optional[str] = None
-    event_filter: Optional[list[str]] = None  # empty/None = all events
+    description: str | None = None
+    event_filter: list[str] | None = None  # empty/None = all events
 
 
 def _serialize_endpoint(e: WebhookEndpoint, *, include_secret: bool = False) -> dict:
@@ -124,9 +123,9 @@ async def disable_webhook(
 
 @router.get("/deliveries")
 async def list_deliveries(
-    endpoint_id: Optional[str] = Query(None),
-    limit: Optional[int] = Query(None, ge=1, le=200),
-    cursor: Optional[str] = Query(None),
+    endpoint_id: str | None = Query(None),
+    limit: int | None = Query(None, ge=1, le=200),
+    cursor: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):

@@ -7,7 +7,6 @@ trusted infrastructure, not a tenant). GET /history is public so the
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -25,8 +24,8 @@ class ProbeIn(BaseModel):
     region: str
     target: str
     ok: bool
-    status_code: Optional[int] = None
-    latency_ms: Optional[int] = None
+    status_code: int | None = None
+    latency_ms: int | None = None
 
 
 @router.post("/probe", dependencies=[Depends(_check_admin)], include_in_schema=False)

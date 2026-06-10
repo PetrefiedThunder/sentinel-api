@@ -1,6 +1,6 @@
 import pytest
-from app.config import settings
 
+from app.config import settings
 from app.services.approval_tokens import (
     InvalidApprovalToken,
     create_decision_token,

@@ -8,7 +8,6 @@ tenants.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import and_, delete, func, select
@@ -22,7 +21,7 @@ router = APIRouter(include_in_schema=False)
 
 
 def _check_admin(
-    authorization: Optional[str] = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> None:
     """Reject unless Authorization: Bearer matches settings.ADMIN_TOKEN."""
     expected = settings.ADMIN_TOKEN
@@ -113,4 +112,64 @@ async def purge_unverified(
         "deleted_approvals": deleted_approvals,
         "deleted_audit_events": deleted_audit,
         "sample": sample,
+    }
+
+
+@router.post("/admin/rechain-audit", dependencies=[Depends(_check_admin)])
+async def rechain_audit(dry_run: bool = True, db: AsyncSession = Depends(get_db)) -> dict:
+    """ONE-TIME pre-GA repair: rebuild every tenant's audit chain in canonical
+    (created_at, id) order.
+
+    Why this exists: append_audit_event had a concurrency race (no per-tenant
+    lock) that forked the chain under parallel appends. The race is fixed
+    (advisory lock in audit_log.py); this endpoint heals the historical forks.
+    All current data is pre-customer test data — rewriting hashes is
+    acceptable exactly once, before any customer relies on the chain.
+
+    THIS ENDPOINT MUST BE REMOVED after the one production run. A standing
+    re-chain capability would contradict the tamper-evidence guarantee.
+    """
+    from app.services.audit_log import _compute_hash
+
+    tenant_ids = (
+        (await db.execute(select(AuditEvent.tenant_id).distinct())).scalars().all()
+    )
+    rewritten = 0
+    per_tenant: dict[str, int] = {}
+    for tid in tenant_ids:
+        events = (
+            (
+                await db.execute(
+                    select(AuditEvent)
+                    .where(AuditEvent.tenant_id == tid)
+                    .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        prev_hash = None
+        for e in events:
+            payload = {
+                "action_id": e.action_id,
+                "execution_result": e.execution_result,
+                "error": e.error,
+            }
+            new_hash = _compute_hash(prev_hash, payload)
+            if e.prev_hash != prev_hash or e.event_hash != new_hash:
+                rewritten += 1
+                per_tenant[tid] = per_tenant.get(tid, 0) + 1
+                if not dry_run:
+                    e.prev_hash = prev_hash
+                    e.event_hash = new_hash
+            # next link always chains off the canonical hash, in both modes,
+            # so dry_run predicts exactly what execute will write
+            prev_hash = new_hash
+    if not dry_run:
+        await db.commit()
+    return {
+        "dry_run": dry_run,
+        "tenants_walked": len(tenant_ids),
+        "events_rewritten": rewritten,
+        "per_tenant": per_tenant,
     }

@@ -25,12 +25,12 @@ from starlette.responses import Response
 
 # Per-request context that gets stamped onto every log line emitted during
 # the request. set() in middleware, .get() inside structlog processor.
-_request_ctx: ContextVar[dict[str, Any]] = ContextVar("_request_ctx", default={})
+_request_ctx: ContextVar[dict[str, Any] | None] = ContextVar("_request_ctx", default=None)
 
 
 def _inject_request_ctx(_, __, event_dict: dict) -> dict:
     """structlog processor: merge any active request context into the log."""
-    ctx = _request_ctx.get()
+    ctx = _request_ctx.get() or {}
     for k, v in ctx.items():
         event_dict.setdefault(k, v)
     return event_dict
@@ -121,7 +121,7 @@ def bind_request_context(**fields: Any) -> None:
     """Call from anywhere inside a request handler to attach additional
     fields (tenant_id, action_id, etc.) to every subsequent log line in
     this request."""
-    current = dict(_request_ctx.get())
+    current = dict(_request_ctx.get() or {})
     current.update({k: v for k, v in fields.items() if v is not None})
     _request_ctx.set(current)
 

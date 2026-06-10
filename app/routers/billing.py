@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,7 +96,7 @@ async def create_checkout(
 @router.post("/webhook", include_in_schema=False)
 async def stripe_webhook(
     request: Request,
-    stripe_signature: Optional[str] = Header(default=None, alias="Stripe-Signature"),
+    stripe_signature: str | None = Header(default=None, alias="Stripe-Signature"),
     db: AsyncSession = Depends(get_db),
 ):
     """Receive subscription lifecycle events from Stripe. Signature-verified
@@ -117,7 +116,7 @@ async def stripe_webhook(
     try:
         event = httpx.Response(200, content=raw_body).json()
     except Exception:
-        raise HTTPException(400, "Malformed JSON body")
+        raise HTTPException(400, "Malformed JSON body") from None
 
     event_type = event.get("type", "")
     obj = (event.get("data") or {}).get("object") or {}
