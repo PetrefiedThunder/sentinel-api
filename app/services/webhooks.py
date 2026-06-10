@@ -38,6 +38,21 @@ SIGNATURE_HEADER = "X-Sentinel-Signature"
 EVENT_HEADER = "X-Sentinel-Event"
 ID_HEADER = "X-Sentinel-Delivery"
 
+# The event loop only keeps weak references to tasks; without a strong
+# reference here, an in-flight delivery (and its retries) can be GC'd.
+_inflight: set[asyncio.Task] = set()
+
+
+def _track(task: asyncio.Task) -> None:
+    _inflight.add(task)
+    task.add_done_callback(_on_delivery_done)
+
+
+def _on_delivery_done(task: asyncio.Task) -> None:
+    _inflight.discard(task)
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        log.error("webhook delivery task crashed: %s", exc, exc_info=exc)
+
 
 def generate_secret() -> str:
     """64-char URL-safe random secret. Shown ONCE on creation."""
@@ -109,7 +124,7 @@ async def dispatch_approval_webhook(
 
     for endpoint in endpoints:
         # Spawn each delivery as its own task — never block the caller.
-        asyncio.create_task(_deliver_with_retries(endpoint, event_type, approval))
+        _track(asyncio.create_task(_deliver_with_retries(endpoint, event_type, approval)))
 
 
 async def _deliver_with_retries(
