@@ -55,6 +55,7 @@ def client_with_db():
 def test_signed_decision_link_approves_pending_action(client_with_db, monkeypatch):
     client, approval, db = client_with_db
     audit_events = []
+    webhook_dispatches = []
 
     def verify_token(token, action_id):
         assert token == "signed_token"
@@ -64,8 +65,12 @@ def test_signed_decision_link_approves_pending_action(client_with_db, monkeypatc
     async def append_event(db_arg, tenant_id, action_id, execution_result):
         audit_events.append((tenant_id, action_id, execution_result))
 
+    async def dispatch_webhook(db_arg, approval_arg):
+        webhook_dispatches.append(approval_arg.id)
+
     monkeypatch.setattr(approvals_router, "verify_decision_token", verify_token, raising=False)
     monkeypatch.setattr(approvals_router, "append_audit_event", append_event)
+    monkeypatch.setattr(approvals_router, "dispatch_approval_webhook", dispatch_webhook)
 
     response = client.post(
         "/v1/approvals/act_123/token-decision",
@@ -78,6 +83,7 @@ def test_signed_decision_link_approves_pending_action(client_with_db, monkeypatc
     assert approval.decided_by == "signed_link"
     assert db.committed is True
     assert audit_events == [("ten_123", "act_123", "decision:approved")]
+    assert webhook_dispatches == ["act_123"]
 
 
 def test_signed_decision_link_rejects_invalid_token(client_with_db, monkeypatch):
