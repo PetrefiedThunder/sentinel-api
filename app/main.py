@@ -11,6 +11,7 @@ from app.routers import (
     approvals,
     audit,
     billing,
+    status_history,
     tenants,
     twilio_webhooks,
     webhooks,
@@ -66,6 +67,7 @@ app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tag
 app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
 app.include_router(twilio_webhooks.router)
 app.include_router(webhooks.router, prefix="/v1/webhooks", tags=["webhooks"])
+app.include_router(status_history.router, prefix="/v1/status", tags=["status"])
 app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
 app.include_router(admin.router, prefix="/v1", tags=["admin"])
 
