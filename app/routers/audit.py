@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -11,7 +12,10 @@ from app.auth import get_current_tenant
 from app.db import get_db
 from app.models import Approval, AuditEvent, Tenant
 from app.schemas import AuditEventCreate
-from app.services.audit_log import append_audit_event
+
+# _compute_hash is the canonical hash used when events are appended
+# (see app/services/audit_log.py) — verification must replicate it exactly.
+from app.services.audit_log import _compute_hash, append_audit_event
 from app.services.pagination import paginate_stmt
 
 router = APIRouter()
@@ -72,6 +76,50 @@ async def list_events(
         "data": [_serialize(e) for e in page.items],
         "has_more": page.has_more,
         "next_cursor": page.next_cursor,
+    }
+
+
+@router.get("/verify")
+async def verify_chain(
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Walk the tenant's full audit hash chain and prove tamper-evidence.
+
+    Recomputes each event's hash from its stored payload (same computation as
+    app/services/audit_log.py) and checks the prev_hash linkage. Read-only.
+    """
+    stmt = (
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == tenant.id)
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+    )
+    result = await db.execute(stmt)
+    events = result.scalars().all()
+
+    valid = True
+    first_invalid_event_id = None
+    prev_event_hash = None
+
+    for e in events:
+        # Same payload shape append_audit_event hashes at write time.
+        payload = {
+            "action_id": e.action_id,
+            "execution_result": e.execution_result,
+            "error": e.error,
+        }
+        expected_hash = _compute_hash(e.prev_hash, payload)
+        if e.event_hash != expected_hash or e.prev_hash != prev_event_hash:
+            valid = False
+            first_invalid_event_id = e.id
+            break
+        prev_event_hash = e.event_hash
+
+    return {
+        "valid": valid,
+        "events_checked": len(events),
+        "first_invalid_event_id": first_invalid_event_id,
+        "checked_at": datetime.now(UTC).isoformat(),
     }
 
 
