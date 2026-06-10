@@ -57,7 +57,7 @@ def test_dispatch_tracks_delivery_tasks_until_done(monkeypatch):
     run(main())
 
 
-def test_dispatch_logs_crashed_delivery_tasks(monkeypatch, caplog):
+def test_dispatch_logs_crashed_delivery_tasks(monkeypatch):
     async def main():
         engine, session, _ = await make_sqlite_session()
         session.add(
@@ -70,15 +70,17 @@ def test_dispatch_logs_crashed_delivery_tasks(monkeypatch, caplog):
         async def fake_deliver(endpoint, event_type, approval):
             raise RuntimeError("boom")
 
+        errors = []
         monkeypatch.setattr(webhooks, "_deliver_with_retries", fake_deliver)
+        monkeypatch.setattr(
+            webhooks.log, "error", lambda msg, *a, **k: errors.append(msg % a)
+        )
 
         await webhooks.dispatch_approval_webhook(session, _approval())
         await asyncio.gather(*webhooks._inflight, return_exceptions=True)
         await asyncio.sleep(0)
         assert len(webhooks._inflight) == 0
-        assert any(
-            "webhook delivery task crashed" in r.message for r in caplog.records
-        )
+        assert any("webhook delivery task crashed" in m for m in errors)
         await session.close()
         await engine.dispose()
 
