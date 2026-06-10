@@ -107,6 +107,7 @@ class AuditEvent(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     prev_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     event_hash: Mapped[str] = mapped_column(String, nullable=False)
+    tsa_timestamp: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
