@@ -3,6 +3,7 @@ import io
 import json
 from datetime import UTC, datetime
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -17,8 +18,10 @@ from app.schemas import AuditEventCreate
 # (see app/services/audit_log.py) — verification must replicate it exactly.
 from app.services.audit_log import _compute_hash, append_audit_event
 from app.services.pagination import paginate_stmt
+from app.services.tsa import TSAError, timestamp_audit_event
 
 router = APIRouter()
+logger = structlog.get_logger(__name__)
 
 
 def _serialize(e: AuditEvent) -> dict:
@@ -29,6 +32,7 @@ def _serialize(e: AuditEvent) -> dict:
         "error": e.error,
         "prev_hash": e.prev_hash,
         "event_hash": e.event_hash,
+        "tsa_timestamp": e.tsa_timestamp,
         "created_at": e.created_at,
     }
 
@@ -46,6 +50,12 @@ async def emit(
     event = await append_audit_event(
         db, tenant.id, payload.action_id, payload.execution_result, payload.error
     )
+    # Best-effort RFC 3161 timestamping: a no-op unless TSA_URL is configured,
+    # and a TSA outage must never fail the audit write itself.
+    try:
+        await timestamp_audit_event(db, event)
+    except TSAError:
+        logger.warning("tsa_timestamp_failed", event_id=event.id, exc_info=True)
     return _serialize(event)
 
 

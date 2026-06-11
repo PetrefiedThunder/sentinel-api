@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     STRIPE_SUCCESS_URL: str = "https://app.pauseapi.app/billing?status=success"
     STRIPE_CANCEL_URL: str = "https://app.pauseapi.app/billing?status=cancelled"
 
+    # RFC 3161 Time Stamping Authority endpoint (e.g. https://freetsa.org/tsr).
+    # Empty (default) disables audit-event timestamping entirely.
+    TSA_URL: str = ""
+
     SENTRY_DSN: str = ""
     SENTRY_ENVIRONMENT: str = "production"
     SENTRY_TRACES_SAMPLE_RATE: float = 0.05

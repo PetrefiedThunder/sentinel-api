@@ -21,6 +21,7 @@ dependencies = [
     "twilio>=9.0",
     "sentry-sdk[fastapi]>=2.0",
     "structlog>=24.4",
+    "asn1crypto>=1.5",
 ]
 
 [project.optional-dependencies]
