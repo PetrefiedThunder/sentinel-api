@@ -20,6 +20,9 @@ class FakeDb:
             return self.approval
         return None
 
+    def add(self, obj):
+        pass
+
     async def commit(self):
         self.committed = True
 
