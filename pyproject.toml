@@ -67,5 +67,5 @@ addopts = "--cov=app --cov-report=term-missing"
 source = ["app"]
 
 [tool.coverage.report]
-# Measured at 59% when the gate was added; raising to 70 is follow-up work.
-fail_under = 58
+# Gate raised to 70 in QA-COVERAGE-70 (measured ~80% at the time).
+fail_under = 70
