@@ -17,24 +17,20 @@ Notifications are dispatched as a FastAPI BackgroundTask from
 counter to (a) keep the suite hermetic and (b) assert that a replay does not
 fire a second notification.
 
-KNOWN BUG (see module-level `STORE_BUG` xfail below)
-----------------------------------------------------
-`run_with_idempotency` stores the handler's raw response dict into the
+FIXED BUG (was: datetime serialization 500 on first keyed POST)
+---------------------------------------------------------------
+`run_with_idempotency` used to store the handler's raw response dict into the
 `idempotency_keys.response_body` JSON column. For approval creation that dict
 contains a `datetime` (`created_at`, via `_serialize`). No custom
-`json_serializer` is configured on the engine (app/db.py), so SQLAlchemy uses
-`json.dumps`, which raises `TypeError: Object of type datetime is not JSON
-serializable` on the INSERT. This happens on the FIRST keyed POST — before any
-replay can occur — and applies to both SQLite (tests) and the prod
-Postgres/asyncpg engine, since neither sets a datetime-aware serializer.
+`json_serializer` is configured on the engine (app/db.py), so SQLAlchemy used
+`json.dumps`, which raised `TypeError: Object of type datetime is not JSON
+serializable` on the INSERT — on the FIRST keyed POST, before any replay,
+breaking the feature on both SQLite (tests) and prod Postgres/asyncpg.
 
-Effect: every `POST /v1/approvals` sent WITH an `Idempotency-Key` header
-currently 500s. The feature is non-functional as shipped. Fix belongs in
-app code (e.g. serialize the response via `fastapi.encoders.jsonable_encoder`
-before persisting, or set a json-safe `json_serializer` on the engine), so per
-QA scope these assertions are xfail(strict) rather than worked around here.
-The strict marker makes the tests fail loudly (XPASS) once the bug is fixed,
-prompting removal of the marker.
+Fixed in `app.services.idempotency` by encoding the response with
+`fastapi.encoders.jsonable_encoder` before persisting (and returning the
+encoded form, so the first response matches the replay byte-for-byte). These
+tests therefore run as normal assertions.
 """
 
 import pytest
@@ -42,18 +38,6 @@ from sqlalchemy import func, select
 from test_support import TENANT_ID, client_for, make_sqlite_session, run
 
 from app.models import Approval, IdempotencyKey, Tenant
-
-# Applied to every test whose path persists an IdempotencyKey row (i.e. any
-# keyed request). Remove once app code serializes response_body safely.
-STORE_BUG = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: run_with_idempotency persists a datetime-containing dict into the "
-        "JSON response_body column with the default json.dumps serializer -> "
-        "first keyed POST raises 'Object of type datetime is not JSON "
-        "serializable'. Fix in app code, then drop this marker."
-    ),
-)
 
 # An email approver needs no SMS-consent contact, so creation succeeds cleanly.
 PAYLOAD = {
@@ -89,7 +73,6 @@ def _count_approvals(session) -> int:
     )
 
 
-@STORE_BUG
 def test_same_key_same_payload_replays_original_resource(no_notifications):
     """Same Idempotency-Key + same payload -> same id, no duplicate row."""
     engine, session, tenant = run(make_sqlite_session())
@@ -117,7 +100,6 @@ def test_same_key_same_payload_replays_original_resource(no_notifications):
         run(engine.dispose())
 
 
-@STORE_BUG
 def test_same_key_different_payload_conflicts(no_notifications):
     """Same key + DIFFERENT payload -> 409, original unchanged, no new row.
 
@@ -149,7 +131,6 @@ def test_same_key_different_payload_conflicts(no_notifications):
         run(engine.dispose())
 
 
-@STORE_BUG
 def test_different_keys_create_independent_resources(no_notifications):
     """Different keys, same payload -> two distinct resources."""
     engine, session, tenant = run(make_sqlite_session())
@@ -194,7 +175,6 @@ def test_no_key_does_not_dedupe(no_notifications):
         run(engine.dispose())
 
 
-@STORE_BUG
 def test_same_key_persists_idempotency_row(no_notifications):
     """The first use records an IdempotencyKey row keyed by (tenant, key)
     with the response body it will replay."""
@@ -217,7 +197,6 @@ def test_same_key_persists_idempotency_row(no_notifications):
         run(engine.dispose())
 
 
-@STORE_BUG
 def test_same_key_scoped_per_tenant(no_notifications):
     """The idempotency key is scoped to (tenant_id, key). The same key used by
     a different tenant is independent — it creates a fresh resource rather than
