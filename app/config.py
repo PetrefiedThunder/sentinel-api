@@ -25,11 +25,22 @@ class Settings(BaseSettings):
 
     ADMIN_TOKEN: str = ""
 
+    # Staleness threshold for an in-progress idempotency claim. The claim-first
+    # flow reserves an IdempotencyKey row with response_status=0 (_IN_PROGRESS)
+    # before running the handler. If the process crashes between claiming and
+    # storing the real response, that row would otherwise stay in-progress
+    # forever, bricking the key (every retry polls, times out, gets a 409). When
+    # `now - created_at` exceeds this threshold the claim is treated as abandoned
+    # and a retry takes it over and re-runs the handler. Must comfortably exceed
+    # the longest expected in-request handler time and the brief poll window
+    # (~0.25s); 30s leaves a wide margin while keeping recovery prompt.
+    IDEMPOTENCY_INPROGRESS_TTL_SECONDS: int = 30
+
     # Stripe billing — keys come from Stripe dashboard. If empty, billing
     # endpoints return 503 (feature disabled).
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
-    STRIPE_PRICE_PRO: str = ""        # price_... id of the Pro monthly plan
+    STRIPE_PRICE_PRO: str = ""  # price_... id of the Pro monthly plan
     STRIPE_SUCCESS_URL: str = "https://app.pauseapi.app/billing?status=success"
     STRIPE_CANCEL_URL: str = "https://app.pauseapi.app/billing?status=cancelled"
 

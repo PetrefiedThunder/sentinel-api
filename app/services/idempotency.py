@@ -44,15 +44,25 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models import IdempotencyKey
+
+
+def _utcnow() -> datetime:
+    """Naive UTC `now`, comparable to the naive `created_at` written by the
+    model's `datetime.utcnow` default (mirrors app/services/contacts.py)."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
 
 # Sentinel stored in `response_status` while the winner is still running its
 # handler. A row in this state has been CLAIMED but its real response is not
@@ -83,6 +93,34 @@ def _replay(row: IdempotencyKey) -> Any:
     return JSONResponse(content=body, status_code=row.response_status)
 
 
+async def _try_takeover_stale_claim(
+    db: AsyncSession, *, tenant_id: str, idempotency_key: str, cutoff: datetime
+) -> bool:
+    """Concurrency-safe takeover of an abandoned in-progress claim.
+
+    A single conditional UPDATE re-claims the row only while it is BOTH still
+    in-progress AND older than `cutoff`, bumping `created_at` to now so the
+    takeover itself gets a fresh window. The WHERE guard makes this a
+    single-winner operation: if two retries race, exactly one UPDATE matches the
+    row (rowcount == 1) and the other matches zero rows (rowcount == 0, because
+    the winner already moved `created_at` past the cutoff). The loser returns
+    False and falls back to the normal poll/replay path.
+
+    Returns True iff THIS caller won the takeover and now owns the claim.
+    """
+    result = await db.execute(
+        update(IdempotencyKey)
+        .where(
+            IdempotencyKey.tenant_id == tenant_id,
+            IdempotencyKey.idempotency_key == idempotency_key,
+            IdempotencyKey.response_status == _IN_PROGRESS,
+            IdempotencyKey.created_at < cutoff,
+        )
+        .values(created_at=_utcnow())
+    )
+    return result.rowcount == 1
+
+
 async def _replay_existing(
     db: AsyncSession,
     *,
@@ -90,10 +128,21 @@ async def _replay_existing(
     idempotency_key: str,
     body_hash: str,
     row: IdempotencyKey,
+    method: str | None = None,
+    path: str | None = None,
+    handler: Callable[[], Awaitable[dict]] | None = None,
+    status_code: int = 200,
 ) -> Any:
     """Handle a row we found via the initial lookup: enforce the body-hash
     match, then either replay the stored response or — if the winner is still
-    in progress — poll briefly and replay, else return the degraded 409."""
+    in progress — poll briefly and replay, else return the degraded 409.
+
+    If the in-progress claim is STALE (older than the configured TTL) and a
+    handler is supplied, the prior claim is treated as abandoned (e.g. the
+    winner's process crashed between claiming and storing). We attempt a
+    single-winner takeover: re-claim the row and run the handler exactly as if
+    the key were fresh. Losing the takeover race (or having no handler, e.g. the
+    rolled-back-claim re-fetch) falls back to poll/replay."""
     if row.request_hash != body_hash:
         raise HTTPException(
             409,
@@ -102,7 +151,58 @@ async def _replay_existing(
         )
     if row.response_status != _IN_PROGRESS:
         return _replay(row)
+
+    if handler is not None:
+        cutoff = _utcnow() - timedelta(seconds=settings.IDEMPOTENCY_INPROGRESS_TTL_SECONDS)
+        if row.created_at < cutoff:
+            took_over = await _try_takeover_stale_claim(
+                db, tenant_id=tenant_id, idempotency_key=idempotency_key, cutoff=cutoff
+            )
+            if took_over:
+                claim = await db.get(IdempotencyKey, (tenant_id, idempotency_key))
+                # Keep claim metadata consistent with this request's attempt.
+                if method is not None:
+                    claim.method = method.upper()
+                if path is not None:
+                    claim.path = path
+                return await _run_and_store(
+                    db, claim=claim, handler=handler, status_code=status_code
+                )
+
     return await _poll_for_response(db, tenant_id=tenant_id, idempotency_key=idempotency_key)
+
+
+async def _run_and_store(
+    db: AsyncSession,
+    *,
+    claim: IdempotencyKey,
+    handler: Callable[[], Awaitable[dict]],
+    status_code: int,
+) -> Any:
+    """Own an in-progress claim, run the handler exactly once, persist the real
+    response, and return it (encoded so the first response matches the replay).
+
+    Shared by the fresh-claim path and the stale-claim takeover path."""
+    response = await handler()
+
+    # The handler's response may contain non-JSON-native values (e.g. datetime
+    # in `created_at`/`decided_at`). The async engine in app/db.py uses the
+    # default json.dumps with no datetime-aware serializer, so persisting the
+    # raw dict into the JSON `response_body` column raises "Object of type
+    # datetime is not JSON serializable". Encode to JSON-native types first.
+    # Returning the encoded form (not the raw `response`) also makes the first
+    # response byte-for-byte identical to the replayed one, since FastAPI's
+    # default response encoding applies the same jsonable_encoder.
+    encoded = jsonable_encoder(response)
+
+    claim.response_status = status_code
+    claim.response_body = encoded
+    db.add(claim)
+    await db.commit()
+
+    if status_code == 200:
+        return encoded
+    return JSONResponse(content=encoded, status_code=status_code)
 
 
 async def _poll_for_response(db: AsyncSession, *, tenant_id: str, idempotency_key: str) -> Any:
@@ -159,6 +259,10 @@ async def run_with_idempotency(
             idempotency_key=idempotency_key,
             body_hash=body_hash,
             row=existing,
+            method=method,
+            path=path,
+            handler=handler,
+            status_code=status_code,
         )
 
     # First time we've seen this key — CLAIM it before doing any work. Insert an
@@ -195,26 +299,8 @@ async def run_with_idempotency(
             row=row,
         )
 
-    # We own the claim. Run the handler exactly once. (The handler may commit
-    # internally — e.g. create_approval commits the Approval — which also
-    # commits our in-progress claim row; that's fine, we update it below.)
-    response = await handler()
-
-    # The handler's response may contain non-JSON-native values (e.g. datetime
-    # in `created_at`/`decided_at`). The async engine in app/db.py uses the
-    # default json.dumps with no datetime-aware serializer, so persisting the
-    # raw dict into the JSON `response_body` column raises "Object of type
-    # datetime is not JSON serializable". Encode to JSON-native types first.
-    # Returning the encoded form (not the raw `response`) also makes the first
-    # response byte-for-byte identical to the replayed one, since FastAPI's
-    # default response encoding applies the same jsonable_encoder.
-    encoded = jsonable_encoder(response)
-
-    claim.response_status = status_code
-    claim.response_body = encoded
-    db.add(claim)
-    await db.commit()
-
-    if status_code == 200:
-        return encoded
-    return JSONResponse(content=encoded, status_code=status_code)
+    # We own the claim. Run the handler exactly once and store the real
+    # response. (The handler may commit internally — e.g. create_approval
+    # commits the Approval — which also commits our in-progress claim row;
+    # that's fine, _run_and_store updates it afterward.)
+    return await _run_and_store(db, claim=claim, handler=handler, status_code=status_code)
