@@ -30,3 +30,39 @@ jobs:
 
       - name: Pytest (with coverage gate)
         run: pytest -q --cov=app --cov-report=term-missing
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # gitleaks needs full history to scan past commits
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      # Dependency advisory scan. Resolves the project's dependency tree from
+      # pyproject.toml and checks it against the PyPI advisory database (OSV).
+      # Day-one policy: continue-on-error so a newly disclosed advisory in an
+      # existing/transitive dependency does NOT instantly red-line main for the
+      # whole team. The result stays visible in the job log; we triage and pin.
+      # Local dry run on this branch: "No known vulnerabilities found".
+      - name: pip-audit (dependency advisories)
+        continue-on-error: true
+        run: uvx pip-audit .
+
+      # Secret scan. Hard gate: a clean repo must stay clean. Local dry run on
+      # this branch found no leaks across 60 commits + the working tree, so any
+      # hit here is a real regression that should block the merge.
+      # Run the gitleaks binary directly rather than gitleaks-action: the
+      # action calls the GitHub API to post PR summaries and fails with
+      # "Resource not accessible by integration" without a permissions block.
+      # The binary needs no API access and is a clean hard gate (exit 1 on leak).
+      - name: gitleaks (secret scan)
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks git . --redact --no-banner
