@@ -3,6 +3,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://user:pass@localhost:5432/sentinel"
+    # Optional Postgres read replica. When empty (default), read-only endpoints
+    # fall back to the primary engine — behaviour is identical to having no
+    # replica. When set, read sessions target this URL. See
+    # docs/runbooks/postgres-read-replica.md for provisioning.
+    READ_REPLICA_URL: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
     JWT_SECRET: str = "change-me"
     TWILIO_ACCOUNT_SID: str = ""
