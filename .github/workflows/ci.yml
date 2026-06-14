@@ -30,3 +30,35 @@ jobs:
 
       - name: Pytest (with coverage gate)
         run: pytest -q --cov=app --cov-report=term-missing
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # gitleaks needs full history to scan past commits
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      # Dependency advisory scan. Resolves the project's dependency tree from
+      # pyproject.toml and checks it against the PyPI advisory database (OSV).
+      # Day-one policy: continue-on-error so a newly disclosed advisory in an
+      # existing/transitive dependency does NOT instantly red-line main for the
+      # whole team. The result stays visible in the job log; we triage and pin.
+      # Local dry run on this branch: "No known vulnerabilities found".
+      - name: pip-audit (dependency advisories)
+        continue-on-error: true
+        run: uvx pip-audit .
+
+      # Secret scan. Hard gate: a clean repo must stay clean. Local dry run on
+      # this branch found no leaks across 60 commits + the working tree, so any
+      # hit here is a real regression that should block the merge.
+      - name: gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
