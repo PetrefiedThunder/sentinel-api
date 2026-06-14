@@ -89,6 +89,12 @@ Endpoint groups:
 pytest -q
 ```
 
+Coverage is collected automatically (`pytest-cov`, configured in `pyproject.toml`) and the run fails if total coverage drops below the `fail_under` gate. For a detailed per-file report:
+
+```bash
+pytest -q --cov-report=html  # open htmlcov/index.html
+```
+
 9 unit/integration files. End-to-end smoke against the live API uses the `realworld_test.py` script in [`sentinel-examples`](https://github.com/PetrefiedThunder/sentinel-examples).
 
 ## Deploy

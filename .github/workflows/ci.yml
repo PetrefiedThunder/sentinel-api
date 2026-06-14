@@ -28,5 +28,5 @@ jobs:
       - name: Ruff check
         run: ruff check .
 
-      - name: Pytest
-        run: pytest -q
+      - name: Pytest (with coverage gate)
+        run: pytest -q --cov=app --cov-report=term-missing
