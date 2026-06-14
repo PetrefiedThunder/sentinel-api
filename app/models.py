@@ -69,6 +69,20 @@ class IdempotencyKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class ConsumedDecisionNonce(Base):
+    """Single-use tracking for signed decision tokens (replay protection).
+
+    `nonce` is the SHA-256 hex digest of the presented token — the raw
+    token is never stored. Inserted in the same transaction as the
+    decision; the primary key makes concurrent reuse lose the race.
+    """
+
+    __tablename__ = "consumed_decision_nonces"
+    nonce: Mapped[str] = mapped_column(String(64), primary_key=True)
+    action_id: Mapped[str] = mapped_column(String, ForeignKey("approvals.id"), index=True, nullable=False)
+    consumed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class WebhookEndpoint(Base):
     __tablename__ = "webhook_endpoints"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("whk"))

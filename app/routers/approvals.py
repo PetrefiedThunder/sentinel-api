@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_tenant
@@ -15,6 +16,7 @@ from app.services.audit_log import append_audit_event
 from app.services.contacts import find_active_sms_contact, sms_approver_phone
 from app.services.decision_bus import bus, notify_decision
 from app.services.idempotency import run_with_idempotency
+from app.services.nonce_store import is_nonce_consumed, mark_nonce_consumed, token_nonce
 from app.services.pagination import paginate_stmt
 from app.services.webhooks import dispatch_approval_webhook
 
@@ -202,6 +204,12 @@ async def decide_with_token(
     except (InvalidApprovalToken, ValueError):
         raise HTTPException(401, "Invalid or expired approval token") from None
 
+    # Replay protection: each token is single-use, tracked server-side
+    # (persisted, so it survives restarts and any approval-state changes).
+    nonce = token_nonce(payload.token)
+    if await is_nonce_consumed(db, nonce):
+        raise HTTPException(409, "Approval token already used")
+
     approval = await db.get(Approval, action_id)
     if not approval:
         raise HTTPException(404, "Not found")
@@ -212,7 +220,14 @@ async def decide_with_token(
     approval.decided_by = "signed_link"
     approval.decided_at = _utcnow()
     approval.reason = "Signed approval link"
-    await db.commit()
+    # Same transaction as the decision — they can't diverge.
+    mark_nonce_consumed(db, nonce, approval.id)
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Concurrent request consumed this token between our check and commit.
+        await db.rollback()
+        raise HTTPException(409, "Approval token already used") from None
     await db.refresh(approval)
     await append_audit_event(
         db, approval.tenant_id, approval.id, f"decision:{decision}"
