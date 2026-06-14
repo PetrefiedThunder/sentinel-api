@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import IdempotencyKey
@@ -71,6 +72,16 @@ async def run_with_idempotency(
     # First time we see this key. Run the handler, persist the result.
     response = await handler()
 
+    # The handler's response may contain non-JSON-native values (e.g. datetime
+    # in `created_at`/`decided_at`). The async engine in app/db.py uses the
+    # default json.dumps with no datetime-aware serializer, so persisting the
+    # raw dict into the JSON `response_body` column raises "Object of type
+    # datetime is not JSON serializable". Encode to JSON-native types first.
+    # Returning the encoded form (not the raw `response`) also makes the first
+    # response byte-for-byte identical to the replayed one, since FastAPI's
+    # default response encoding applies the same jsonable_encoder.
+    encoded = jsonable_encoder(response)
+
     db.add(
         IdempotencyKey(
             tenant_id=tenant_id,
@@ -79,8 +90,8 @@ async def run_with_idempotency(
             path=path,
             request_hash=body_hash,
             response_status=200,
-            response_body=response,
+            response_body=encoded,
         )
     )
     await db.commit()
-    return response
+    return encoded
