@@ -36,6 +36,14 @@ in-progress marker; it polls briefly for the stored response and replays it.
 If the response is still not stored after a short bounded wait, it returns
 409 ("request in progress, retry") as a documented degraded fallback — the
 common, sequential retry-after-response case never hits this path.
+
+Stuck-claim recovery
+--------------------
+If the winner crashes after committing the claim but before storing its
+response, the row is left in-progress forever and every retry of that key
+would poll-and-409 permanently. To bound that, an in-progress claim older than
+`_CLAIM_STALE_AFTER` is treated as abandoned: the next same-key request deletes
+it and re-claims (which re-runs the handler), so the key un-wedges on its own.
 """
 
 from __future__ import annotations
@@ -44,12 +52,13 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import IdempotencyKey
@@ -59,6 +68,16 @@ from app.models import IdempotencyKey
 # yet persisted. `response_status` is a valid HTTP status everywhere else, so 0
 # (not a real HTTP status) unambiguously means "in progress".
 _IN_PROGRESS = 0
+
+# Bounded recovery for wedged claims. If a winner crashes after claiming the row
+# (and committing the claim) but before storing its real response, the row is
+# left in `_IN_PROGRESS` forever. Without recovery, every future retry of that
+# (tenant, key) polls briefly and returns the degraded 409 — the key is wedged
+# permanently. So an in-progress claim older than this threshold is treated as
+# abandoned: the next same-key request deletes it and re-claims. The threshold
+# is comfortably longer than any handler should run (a long handler that is
+# still legitimately in flight would not yet be this old).
+_CLAIM_STALE_AFTER = timedelta(seconds=60)
 
 # Bounded poll for a concurrent winner to publish its stored response before we
 # give up and return the degraded 409. Total wait ≈ attempts * delay.
@@ -123,6 +142,31 @@ async def _poll_for_response(db: AsyncSession, *, tenant_id: str, idempotency_ke
     )
 
 
+def _is_abandoned_claim(row: IdempotencyKey) -> bool:
+    """True if `row` is an in-progress claim old enough to be treated as
+    abandoned (the winner crashed before storing its response).
+
+    `created_at` is naive UTC (default `datetime.utcnow`, see app.models), so we
+    compare against naive `datetime.utcnow()` — never an aware `now`."""
+    return (
+        row.response_status == _IN_PROGRESS
+        and datetime.utcnow() - row.created_at > _CLAIM_STALE_AFTER
+    )
+
+
+async def _abandon_claim(db: AsyncSession, row: IdempotencyKey) -> None:
+    """Delete a stale in-progress claim so the caller can re-claim the key.
+
+    Best-effort: if a concurrent retry already deleted (or re-claimed) the row,
+    the delete is a no-op/raises — we roll back and let the caller's re-claim
+    proceed, which is still adjudicated by the primary-key IntegrityError path."""
+    try:
+        await db.delete(row)
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+
+
 async def run_with_idempotency(
     db: AsyncSession,
     *,
@@ -153,13 +197,22 @@ async def run_with_idempotency(
 
     existing = await db.get(IdempotencyKey, (tenant_id, idempotency_key))
     if existing is not None:
-        return await _replay_existing(
-            db,
-            tenant_id=tenant_id,
-            idempotency_key=idempotency_key,
-            body_hash=body_hash,
-            row=existing,
-        )
+        # Recover a wedged key: an in-progress claim that has outlived the
+        # abandon threshold means its winner crashed before storing a response.
+        # Delete it and fall through to re-claim, instead of polling the
+        # degraded 409 forever. Gate on a matching body hash so a different
+        # payload reusing the key still hits the normal mismatch 409 in
+        # _replay_existing rather than resurrecting the abandoned claim.
+        if _is_abandoned_claim(existing) and existing.request_hash == body_hash:
+            await _abandon_claim(db, existing)
+        else:
+            return await _replay_existing(
+                db,
+                tenant_id=tenant_id,
+                idempotency_key=idempotency_key,
+                body_hash=body_hash,
+                row=existing,
+            )
 
     # First time we've seen this key — CLAIM it before doing any work. Insert an
     # in-progress row and flush so the DB's primary-key constraint adjudicates

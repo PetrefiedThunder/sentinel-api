@@ -19,6 +19,7 @@ flush to collide, rather than racing real threads.
 import asyncio
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from test_support import TENANT_ID, client_for, make_sqlite_session, run
 
@@ -383,6 +384,110 @@ def test_poll_replays_once_winner_publishes(no_notifications):
             idem.asyncio.sleep = orig  # type: ignore[assignment]
 
         assert result == {"id": "act_resolved"}
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_abandoned_in_progress_claim_is_recovered(no_notifications):
+    """A claim wedged in-progress past the abandon threshold (its winner crashed
+    after claiming but before storing a response) must NOT poll-and-409 forever.
+    The next same-key retry deletes the stale claim, re-claims, and runs the
+    handler exactly once — un-wedging the key."""
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        from datetime import datetime, timedelta
+
+        from app.services.idempotency import _CLAIM_STALE_AFTER, _hash_body
+
+        # Seed an in-progress claim created well past the abandon threshold.
+        session.add(
+            IdempotencyKey(
+                tenant_id=TENANT_ID,
+                idempotency_key="wedged-key",
+                method="POST",
+                path="/v1/approvals",
+                request_hash=_hash_body(PAYLOAD),
+                response_status=_IN_PROGRESS,
+                response_body={},
+                created_at=datetime.utcnow() - _CLAIM_STALE_AFTER - timedelta(seconds=5),
+            )
+        )
+        run(session.commit())
+
+        handler_calls = {"n": 0}
+
+        async def handler():
+            handler_calls["n"] += 1
+            return {"id": "act_recovered"}
+
+        result = run(
+            run_with_idempotency(
+                session,
+                tenant_id=TENANT_ID,
+                idempotency_key="wedged-key",
+                method="POST",
+                path="/v1/approvals",
+                request_body=PAYLOAD,
+                handler=handler,
+            )
+        )
+
+        # Recovered: handler ran exactly once and its response is returned.
+        assert result == {"id": "act_recovered"}
+        assert handler_calls["n"] == 1
+
+        # The key is now backed by a stored (non-in-progress) response, so a
+        # later retry replays instead of re-running the handler.
+        row = run(session.get(IdempotencyKey, (TENANT_ID, "wedged-key")))
+        assert row.response_status == 200
+        assert row.response_body == {"id": "act_recovered"}
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_abandoned_claim_with_different_body_still_conflicts(no_notifications):
+    """Recovery must not resurrect a stale claim for a DIFFERENT payload. A
+    request reusing a wedged key with a different body still gets the normal
+    body-mismatch 409 — the handler never runs."""
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        from datetime import datetime, timedelta
+
+        from app.services.idempotency import _CLAIM_STALE_AFTER, _hash_body
+
+        session.add(
+            IdempotencyKey(
+                tenant_id=TENANT_ID,
+                idempotency_key="wedged-key",
+                method="POST",
+                path="/v1/approvals",
+                request_hash=_hash_body(PAYLOAD),
+                response_status=_IN_PROGRESS,
+                response_body={},
+                created_at=datetime.utcnow() - _CLAIM_STALE_AFTER - timedelta(seconds=5),
+            )
+        )
+        run(session.commit())
+
+        async def handler():
+            raise AssertionError("handler must not run on a body-mismatch")
+
+        with pytest.raises(HTTPException) as exc:
+            run(
+                run_with_idempotency(
+                    session,
+                    tenant_id=TENANT_ID,
+                    idempotency_key="wedged-key",
+                    method="POST",
+                    path="/v1/approvals",
+                    request_body={"function_name": "different_call"},
+                    handler=handler,
+                )
+            )
+        assert exc.value.status_code == 409
+        assert "different request body" in exc.value.detail.lower()
     finally:
         run(session.close())
         run(engine.dispose())
