@@ -1,6 +1,15 @@
+# Sentinel gitleaks configuration (auto-detected by `gitleaks git .` in CI).
+# Extends the upstream default ruleset; allowlists secret-SHAPED dummy values
+# in test fixtures (e.g. sk_live_… sample keys). Real secrets never belong in
+# tests/ — they live in env vars / CI secrets — so the gate stays strict for
+# all non-test paths (verified: a fake key in app/ still fails the scan).
 title = "Sentinel gitleaks config"
+
 [extend]
 useDefault = true
+
 [allowlist]
 description = "Test fixtures hold dummy secret-shaped values, not real secrets"
-paths = ['''tests/.*''']
+paths = [
+  '''tests/.*''',
+]
