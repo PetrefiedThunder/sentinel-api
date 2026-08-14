@@ -83,6 +83,10 @@ Endpoint groups:
 - `/v1/billing` — Stripe Checkout + webhook
 - `/v1/admin` — operator-only, gated by `ADMIN_TOKEN`, hidden from OpenAPI schema
 
+### Downstream consumers
+
+[`agent-middleware-api`](https://github.com/PetrefiedThunder/agent-middleware-api) integrates in production: its human-approval gate and permit-request flow depend on this API's idempotency dedup, the no-server-side-expiry behavior of approvals, `timeout_seconds` bounds, and `/wait` semantics (see its `docs/human-approval-gate.md`). Those behaviors are pinned by `tests/test_middleware_contract.py`, and schema-level breaking changes are gated in CI by `oasdiff` against `docs/openapi.baseline.json` — an intentional API change must regenerate the baseline in the same PR and be coordinated with a middleware update.
+
 ## Tests
 
 ```bash
