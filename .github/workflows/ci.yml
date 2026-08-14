@@ -31,6 +31,40 @@ jobs:
       - name: Pytest (with coverage gate)
         run: pytest -q --cov=app --cov-report=term-missing
 
+  # OpenAPI breaking-change gate. agent-middleware-api integrates against this
+  # API surface (its human-approval gate + permit-request flow), so a breaking
+  # schema change here breaks a production consumer even with zero shared code.
+  # Hard gate on purpose — unlike third-party advisories (pip-audit above),
+  # a breaking change to our own spec is always authored in the PR being
+  # tested, so it is always actionable by that PR's author.
+  # Intentional API change? Regenerate the baseline in the same PR:
+  #   python -c 'import json; from app.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))' > docs/openapi.baseline.json
+  # and flag the PR for a coordinated agent-middleware-api update.
+  # Behavioral (non-schema) contract points are pinned separately in
+  # tests/test_middleware_contract.py.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      - name: Sync deps
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Generate current OpenAPI spec
+        run: python -c 'import json; from app.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))' > /tmp/openapi.current.json
+
+      - name: oasdiff (breaking-change gate vs committed baseline)
+        run: |
+          curl -sSL https://github.com/oasdiff/oasdiff/releases/download/v1.28.0/oasdiff_1.28.0_linux_amd64.tar.gz | tar -xz -C /tmp oasdiff
+          /tmp/oasdiff breaking docs/openapi.baseline.json /tmp/openapi.current.json --fail-on ERR
+
   security:
     runs-on: ubuntu-latest
     steps:
