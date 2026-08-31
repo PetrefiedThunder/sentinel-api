@@ -36,7 +36,12 @@ async def create_approval(db, tenant, payload, background_tasks=None):
         timeout_seconds=payload.timeout_seconds,
     )
     db.add(approval)
-    await db.commit()
+    # Keep the approval in the caller's transaction. The approvals route wraps
+    # this write in run_with_idempotency(), which commits the Approval and the
+    # completed IdempotencyKey response atomically. Committing here would leave
+    # a crash window where the approval exists but the claim still looks
+    # in-progress, allowing a stale retry to create a duplicate approval.
+    await db.flush()
     await db.refresh(approval)
     # Freeze a plain-data snapshot so background tasks don't touch a closed session.
     snapshot = type("ApprovalSnapshot", (), {

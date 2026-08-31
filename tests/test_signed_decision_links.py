@@ -20,11 +20,17 @@ class FakeDb:
             return self.approval
         return None
 
+    async def scalar(self, statement):
+        return self.approval
+
     def add(self, obj):
         pass
 
     async def commit(self):
         self.committed = True
+
+    async def rollback(self):
+        pass
 
     async def refresh(self, obj):
         self.refreshed = True
@@ -65,7 +71,8 @@ def test_signed_decision_link_approves_pending_action(client_with_db, monkeypatc
         assert action_id == "act_123"
         return "approved"
 
-    async def append_event(db_arg, tenant_id, action_id, execution_result):
+    async def append_event(db_arg, tenant_id, action_id, execution_result, *, commit=True):
+        assert commit is False
         audit_events.append((tenant_id, action_id, execution_result))
 
     async def dispatch_webhook(db_arg, approval_arg):

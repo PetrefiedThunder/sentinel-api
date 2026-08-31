@@ -12,7 +12,9 @@ def _compute_hash(prev_hash, payload):
     return hashlib.sha256(data.encode()).hexdigest()
 
 
-async def append_audit_event(db, tenant_id, action_id, execution_result, error=None):
+async def append_audit_event(
+    db, tenant_id, action_id, execution_result, error=None, *, commit=True
+):
     # Serialize concurrent appends per tenant. Without this, two simultaneous
     # appends both read the same "previous" event and fork the chain — found
     # in production by GET /v1/audit-events/verify on 2026-06-10 (two forks
@@ -53,6 +55,10 @@ async def append_audit_event(db, tenant_id, action_id, execution_result, error=N
         event_hash=event_hash,
     )
     db.add(event)
-    await db.commit()
-    await db.refresh(event)
+    if commit:
+        await db.commit()
+        await db.refresh(event)
+    else:
+        # Decision routes own the transaction containing their audit evidence.
+        await db.flush()
     return event

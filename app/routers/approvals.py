@@ -172,22 +172,34 @@ async def decide(
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    approval = await db.get(Approval, action_id)
-    if not approval or approval.tenant_id != tenant.id:
-        raise HTTPException(404, "Not found")
-    if approval.decision != "pending":
-        raise HTTPException(400, f"Already {approval.decision}")
-    if payload.decision not in ("approved", "rejected"):
-        raise HTTPException(400, "decision must be 'approved' or 'rejected'")
-    approval.decision = payload.decision
-    approval.decided_by = payload.decided_by
-    approval.decided_at = _utcnow()
-    approval.reason = payload.reason
-    await db.commit()
+    tenant_id = tenant.id
+    try:
+        approval = await db.scalar(
+            select(Approval)
+            .where(Approval.id == action_id, Approval.tenant_id == tenant_id)
+            # key_share=True without read=True renders FOR NO KEY UPDATE on
+            # PostgreSQL: serialize decisions without blocking audit FK checks.
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        if not approval:
+            raise HTTPException(404, "Not found")
+        if approval.decision != "pending":
+            raise HTTPException(400, f"Already {approval.decision}")
+        if payload.decision not in ("approved", "rejected"):
+            raise HTTPException(400, "decision must be 'approved' or 'rejected'")
+        approval.decision = payload.decision
+        approval.decided_by = payload.decided_by
+        approval.decided_at = _utcnow()
+        approval.reason = payload.reason
+        await append_audit_event(
+            db, tenant_id, action_id, f"decision:{payload.decision}", commit=False
+        )
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
     await db.refresh(approval)
-    await append_audit_event(
-        db, tenant.id, approval.id, f"decision:{payload.decision}"
-    )
     await notify_decision(db, approval.id)
     await dispatch_approval_webhook(db, approval)
     return _serialize(approval)
@@ -207,31 +219,49 @@ async def decide_with_token(
     # Replay protection: each token is single-use, tracked server-side
     # (persisted, so it survives restarts and any approval-state changes).
     nonce = token_nonce(payload.token)
-    if await is_nonce_consumed(db, nonce):
-        raise HTTPException(409, "Approval token already used")
-
-    approval = await db.get(Approval, action_id)
-    if not approval:
-        raise HTTPException(404, "Not found")
-    if approval.decision != "pending":
-        raise HTTPException(400, f"Already {approval.decision}")
-
-    approval.decision = decision
-    approval.decided_by = "signed_link"
-    approval.decided_at = _utcnow()
-    approval.reason = "Signed approval link"
-    # Same transaction as the decision — they can't diverge.
-    mark_nonce_consumed(db, nonce, approval.id)
     try:
+        if await is_nonce_consumed(db, nonce):
+            raise HTTPException(409, "Approval token already used")
+        approval = await db.scalar(
+            select(Approval)
+            .where(Approval.id == action_id)
+            # FOR NO KEY UPDATE keeps audit FK reads compatible with this lock.
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        if not approval:
+            raise HTTPException(404, "Not found")
+        # The same token may have committed while this request waited for the
+        # approval lock. Preserve 409 for replay, 400 for a different token.
+        if await is_nonce_consumed(db, nonce):
+            raise HTTPException(409, "Approval token already used")
+        if approval.decision != "pending":
+            raise HTTPException(400, f"Already {approval.decision}")
+
+        approval.decision = decision
+        approval.decided_by = "signed_link"
+        approval.decided_at = _utcnow()
+        approval.reason = "Signed approval link"
+        mark_nonce_consumed(db, nonce, action_id)
+        await append_audit_event(
+            db, approval.tenant_id, action_id, f"decision:{decision}", commit=False
+        )
         await db.commit()
     except IntegrityError:
-        # Concurrent request consumed this token between our check and commit.
         await db.rollback()
-        raise HTTPException(409, "Approval token already used") from None
+        # Audit failures are not necessarily nonce conflicts. Check the exact
+        # nonce after rollback before translating a constraint error to 409.
+        try:
+            consumed = await is_nonce_consumed(db, nonce)
+        finally:
+            await db.rollback()
+        if consumed:
+            raise HTTPException(409, "Approval token already used") from None
+        raise
+    except BaseException:
+        await db.rollback()
+        raise
     await db.refresh(approval)
-    await append_audit_event(
-        db, approval.tenant_id, approval.id, f"decision:{decision}"
-    )
     await notify_decision(db, approval.id)
     await dispatch_approval_webhook(db, approval)
     return _serialize(approval)
