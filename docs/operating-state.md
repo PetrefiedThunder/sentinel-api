@@ -3,10 +3,10 @@
 Session: 2026-08-31. This is an evidence and ownership record, not a new
 orchestration service or a claim that agents run after this task ends.
 
-Current cycle: **2 — decision/audit correction, complete**, authorized by the
-user's "Continue". The completed cycle-1 record below is preserved as history; its
-no-runtime-change boundary does not apply to the newly authorized correction.
-See [cycle 2](#cycle-2-decisionaudit-correction) for current ownership and evidence.
+Current cycle: **3 — integration and release gate**, authorized by the user's
+request to commit, push, and merge. Cycles 1 and 2 below are preserved as
+historical evidence. See [cycle 3](#cycle-3-integration-and-release-gate) for
+the current external checks and remaining production gate.
 
 ## Mission and boundaries
 
@@ -364,3 +364,61 @@ reconciliation gates before a controlled rollout. Production inspection or
 release requires its own authorization. No commits, pushes, deployments,
 production credentials, outreach, or recurring jobs were used. The local
 cycle is complete and its temporary agents have no ongoing assignment.
+
+## Cycle 3: integration and release gate
+
+The verified candidate was committed as `d3bf960` and pushed to
+`codex/quantum-idempotency-verification-20260831-qxr9m09l`. Pull request
+[#35](https://github.com/PetrefiedThunder/sentinel-api/pull/35) targets `main`.
+GitHub's authoritative Linux jobs passed at that revision: Python 3.11 tests,
+OpenAPI compatibility, and security. The generated contract remained unchanged.
+
+External review produced two valid bounded findings. Commit `077e80a` preserves
+the original database `IntegrityError` if its nonce-classification query or
+ordinary rollback cleanup fails, while cancellation remains transparent. It
+also removes the unsafe inline-notification fallback: the only production
+caller must provide request-scoped `BackgroundTasks`, whose work runs only after
+the route transaction succeeds. New negative tests cover lookup, rollback, and
+cancellation failures, missing background-task scope, and postcommit dispatch.
+The production checklist now makes the old-writer drain a blocking merge gate.
+
+The review request for new per-tenant metrics is deferred. The repository has
+no metrics subsystem; adding one would introduce dependency and privacy/cardinality
+decisions unrelated to transaction correctness. Existing PostgreSQL contention
+tests and the explicit rollout limitation remain the current evidence boundary.
+Mass docstring and formatting changes are also outside this correction.
+
+A concurrent task wrote an alternate decision implementation and a 22-file
+market-lab package into the original checkout. That implementation differs from
+the independently verified candidate, lacks the real PostgreSQL regression set,
+and fails existing test and Ruff checks. It is excluded from integration.
+Independent product and truth review also exclude the market-lab package: its
+economics and queue results are synthetic, it contains no customer adoption or
+payment evidence, 141 links are machine-specific, and two probes fail against
+the corrected decision code because their snapshot is stale. The files remain
+preserved and untracked in the original checkout; this cycle did not delete or
+publish them. The incidental untracked `uv.lock` is likewise excluded.
+
+Railway read-only status confirms a single production API deployment at
+`aea61c1`, sourced from GitHub `main`; the repository documents automatic
+deployment on a main merge and no staging environment. Therefore merge is a
+production action. It remains blocked until an authorized operator:
+
+1. pauses ingress to both decision routes and approval creation;
+2. drains every old-revision decision writer and verifies no old request remains;
+3. runs the documented production-primary query for
+   `idempotency_keys.response_status = 0` and reconciles any rows;
+4. holds ingress closed through deployment, verifies all live instances run the
+   new revision, then reopens traffic.
+
+Current completion boundary: candidate commits and branch push are complete;
+Linux CI at `d3bf960` is complete; review fixes are locally committed and require
+their fresh remote checks. The frozen post-review Python 3.11 suite passes all
+**233 tests**, including the 18 decision and 8 idempotency PostgreSQL cases,
+with **84.56% statement coverage** against the 70% gate. Its network audit
+records 265 connections to the assigned private PostgreSQL Unix socket and zero
+denied operations. All three test databases had zero residual test schemas and
+other clients before the disposable PostgreSQL server was stopped; its socket
+and PID file are absent. `main` has not been merged or pushed and Railway has
+not been deployed by this cycle. The single highest-value remaining action is
+the controlled production gate followed by merge and deployment verification.
