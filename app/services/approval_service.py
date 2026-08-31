@@ -1,4 +1,4 @@
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from app.config import settings
 from app.models import Approval
@@ -25,7 +25,12 @@ def _resolve_approvers(caller_approvers: list, tenant) -> list:
     )
 
 
-async def create_approval(db, tenant, payload, background_tasks=None):
+async def create_approval(db, tenant, payload, *, background_tasks: BackgroundTasks):
+    if background_tasks is None:
+        raise RuntimeError(
+            "create_approval requires request-scoped BackgroundTasks so "
+            "notifications cannot run before the approval transaction commits"
+        )
     resolved_approvers = _resolve_approvers(payload.approvers, tenant)
     approval = Approval(
         tenant_id=tenant.id,
@@ -53,9 +58,5 @@ async def create_approval(db, tenant, payload, background_tasks=None):
         "approvers": list(approval.approvers or []),
         "timeout_seconds": approval.timeout_seconds,
     })()
-    if background_tasks is not None:
-        background_tasks.add_task(dispatch_approval_notifications, snapshot, tenant)
-    else:
-        # Fallback for tests / callers without a request scope
-        await dispatch_approval_notifications(snapshot, tenant)
+    background_tasks.add_task(dispatch_approval_notifications, snapshot, tenant)
     return approval

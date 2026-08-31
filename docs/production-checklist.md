@@ -26,6 +26,29 @@ Use this before enabling text-message approvals for real users.
 
 ## Idempotency Atomicity Rollout
 
+### Mandatory decision-writer drain gate
+
+Do not merge or deploy the decision atomicity change until the rollout owner
+has a maintenance plan that prevents old and new decision writers from running
+at the same time. During the rollout:
+
+1. Pause ingress to both `/v1/approvals/{action_id}/decision` and
+   `/v1/approvals/{action_id}/token-decision`.
+2. Drain or terminate every API instance running the old decision writer and
+   wait for its in-flight decision requests to finish. Record the old revision,
+   instance list, drain start/end times, and operator in the deployment record.
+3. Verify from the platform's instance/process view and request logs that no
+   old instance or old-revision decision request remains. This is a mandatory
+   human release check; do not infer completion only from elapsed time.
+4. Deploy the new revision to every decision-writing instance, verify all live
+   instances report that revision, then reopen the two decision routes.
+
+If the drain cannot be demonstrated, stop the rollout. Do not run a mixed
+old/new writer fleet: an old writer does not take the row lock or commit its
+decision and audit event atomically.
+
+### Legacy idempotency-claim gate
+
 Before deploying the atomic idempotency change, pause approval writes and run
 this read-only query against the production primary:
 

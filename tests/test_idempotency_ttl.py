@@ -19,6 +19,8 @@ from test_support import TENANT_ID, client_for, make_sqlite_session, run
 
 from app.config import settings
 from app.models import Approval, IdempotencyKey, Tenant
+from app.schemas import ApprovalCreate
+from app.services.approval_service import create_approval
 from app.services.idempotency import (
     _IN_PROGRESS,
     _hash_body,
@@ -242,6 +244,50 @@ def test_crash_before_response_store_rolls_back_then_retry_succeeds(
         assert row.response_body["id"] == retry.json()["id"]
     finally:
         run(retry_session.close())
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_create_approval_requires_background_tasks_before_writing(no_notifications):
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with pytest.raises(RuntimeError, match="requires request-scoped BackgroundTasks"):
+            run(
+                create_approval(
+                    session,
+                    tenant,
+                    ApprovalCreate(**PAYLOAD),
+                    background_tasks=None,
+                )
+            )
+        assert _count_approvals(session) == 0
+        assert len(no_notifications) == 0
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_create_route_dispatches_notification_only_after_commit(no_notifications, monkeypatch):
+    engine, session, tenant = run(make_sqlite_session())
+    real_commit = session.commit
+    commit_calls = 0
+
+    async def observed_commit():
+        nonlocal commit_calls
+        commit_calls += 1
+        assert len(no_notifications) == 0
+        await real_commit()
+
+    monkeypatch.setattr(session, "commit", observed_commit)
+    try:
+        with client_for(session, tenant) as client:
+            response = client.post("/v1/approvals", json=PAYLOAD)
+
+        assert response.status_code == 200
+        assert commit_calls == 1
+        assert _count_approvals(session) == 1
+        assert len(no_notifications) == 1
+    finally:
         run(session.close())
         run(engine.dispose())
 

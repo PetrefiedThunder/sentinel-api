@@ -27,6 +27,16 @@ def _utcnow():
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+async def _rollback_or_reraise_integrity_error(db, error: IntegrityError) -> None:
+    """Clean up an integrity failure without hiding it behind cleanup errors."""
+    try:
+        await db.rollback()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        raise error from None
+
+
 def _serialize(a: Approval) -> dict:
     return {
         "action_id": a.id,
@@ -247,14 +257,18 @@ async def decide_with_token(
             db, approval.tenant_id, action_id, f"decision:{decision}", commit=False
         )
         await db.commit()
-    except IntegrityError:
-        await db.rollback()
+    except IntegrityError as error:
+        await _rollback_or_reraise_integrity_error(db, error)
         # Audit failures are not necessarily nonce conflicts. Check the exact
         # nonce after rollback before translating a constraint error to 409.
         try:
             consumed = await is_nonce_consumed(db, nonce)
-        finally:
-            await db.rollback()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await _rollback_or_reraise_integrity_error(db, error)
+            raise error from None
+        await _rollback_or_reraise_integrity_error(db, error)
         if consumed:
             raise HTTPException(409, "Approval token already used") from None
         raise

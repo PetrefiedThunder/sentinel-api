@@ -213,6 +213,67 @@ async def test_audit_constraint_failure_is_not_a_token_replay(
         assert dispatches == []
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("initial_rollback", "integrity"),
+        ("nonce_lookup", "integrity"),
+        ("final_rollback", "integrity"),
+        ("cancel_lookup", "cancelled"),
+    ],
+)
+async def test_nonce_integrity_cleanup_preserves_original_error_or_cancellation(
+    sessions, monkeypatch, dispatches, failure, expected
+):
+    original = IntegrityError("injected audit constraint", {}, RuntimeError("duplicate"))
+
+    async def fail_audit(*args, **kwargs):
+        raise original
+
+    monkeypatch.setattr(approvals, "append_audit_event", fail_audit)
+    token = create_decision_token(ACTION_ID, "approved", expires_in_seconds=300)
+    async with sessions() as failed:
+        real_rollback = failed.rollback
+        real_lookup = approvals.is_nonce_consumed
+        rollback_calls = 0
+        lookup_calls = 0
+
+        async def controlled_rollback():
+            nonlocal rollback_calls
+            rollback_calls += 1
+            if failure == "initial_rollback" and rollback_calls == 1:
+                raise RuntimeError("injected initial rollback failure")
+            if failure == "final_rollback" and rollback_calls == 2:
+                raise RuntimeError("injected final rollback failure")
+            await real_rollback()
+
+        async def controlled_lookup(db, nonce):
+            nonlocal lookup_calls
+            lookup_calls += 1
+            if lookup_calls <= 2:
+                return await real_lookup(db, nonce)
+            if failure == "cancel_lookup":
+                raise asyncio.CancelledError
+            raise RuntimeError("injected nonce lookup failure")
+
+        monkeypatch.setattr(failed, "rollback", controlled_rollback)
+        if failure in {"nonce_lookup", "cancel_lookup"}:
+            monkeypatch.setattr(approvals, "is_nonce_consumed", controlled_lookup)
+        try:
+            if expected == "cancelled":
+                with pytest.raises(asyncio.CancelledError):
+                    await _decide(failed, "token", token)
+            else:
+                with pytest.raises(IntegrityError) as caught:
+                    await _decide(failed, "token", token)
+                assert caught.value is original
+        finally:
+            monkeypatch.setattr(failed, "rollback", real_rollback)
+            await real_rollback()
+        assert await _state(sessions) == ("pending", 0, 0)
+        assert dispatches == []
+
+
 @pytest.mark.parametrize("route", ["authenticated", "token"])
 async def test_postcommit_dispatch_failure_keeps_decision_and_audit_together(
     sessions, monkeypatch, dispatches, route
