@@ -25,15 +25,12 @@ class Settings(BaseSettings):
 
     ADMIN_TOKEN: str = ""
 
-    # Staleness threshold for an in-progress idempotency claim. The claim-first
-    # flow reserves an IdempotencyKey row with response_status=0 (_IN_PROGRESS)
-    # before running the handler. If the process crashes between claiming and
-    # storing the real response, that row would otherwise stay in-progress
-    # forever, bricking the key (every retry polls, times out, gets a 409). When
-    # `now - created_at` exceeds this threshold the claim is treated as abandoned
-    # and a retry takes it over and re-runs the handler. Must comfortably exceed
-    # the longest expected in-request handler time and the brief poll window
-    # (~0.25s); 30s leaves a wide margin while keeping recovery prompt.
+    # Staleness threshold for an in-progress idempotency claim. New writes
+    # atomically commit the claim, handler effects, and stored response, so a
+    # crash rolls them all back. A committed _IN_PROGRESS row can only have an
+    # indeterminate/legacy outcome; once older than this threshold it fails
+    # closed with 409 instead of re-running a potentially completed write. Keep
+    # this comfortably above the longest expected handler and brief poll window.
     IDEMPOTENCY_INPROGRESS_TTL_SECONDS: int = 30
 
     # Stripe billing — keys come from Stripe dashboard. If empty, billing
