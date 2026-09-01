@@ -422,3 +422,41 @@ other clients before the disposable PostgreSQL server was stopped; its socket
 and PID file are absent. `main` has not been merged or pushed and Railway has
 not been deployed by this cycle. The single highest-value remaining action is
 the controlled production gate followed by merge and deployment verification.
+
+## Cycle 4: unified release candidate
+
+At `2026-09-01T04:14:02Z`, the README trust-boundary commit was backed up to
+`origin/codex/readme-trust-boundary-20260831` and cherry-picked onto this release
+candidate as `6f28b58`. The candidate README SHA256 is
+`3edc04110e909492c999144a1e214bae46b5d4db2bd9af7b616b59450830727d`.
+Before integration, the original dirty checkout was preserved outside the
+repository at `/Users/sellers/Projects/sentinel-build/sentinel-api-recovery-20260831/`:
+
+- tracked diff SHA256: `8e4ef7e579de2abfc87fabb1cfc28bf870000fd3e6f913bedfaa19bb6b2191ad`;
+- 24-file untracked archive SHA256:
+  `e6be7218b0efc142794535d7c5a1936b28f6dd8fccd0d7575e14dd43710781a4`;
+- status inventory SHA256:
+  `9304fac0fbcec722a96f8e82784afeeb2c09832bdbd506582588f5c252a8fbb0`.
+
+Fresh local verification used CPython 3.11.15 in an isolated environment and a
+new local PostgreSQL 16 server accepting only a private Unix socket. The full
+suite passed **233 tests** with **84.72% statement coverage**; this includes all
+18 decision and 8 idempotency PostgreSQL cases. Every temporary test schema was
+dropped (`temporary_schema_count=0`) and the disposable server stopped. Ruff,
+`git diff --check`, bytecode compilation, and the pinned oasdiff 1.28.0 breaking
+change check passed; oasdiff reported `No changes detected`.
+
+One preceding local run produced a single recovery-endpoint `429`. That run was
+under Python 3.14 and reached a live developer Redis at the default localhost
+URL. The fixed-window counter survived earlier test processes, while CI has no
+Redis service and those tests explicitly expect the limiter's fail-open path.
+The hypothesis was tested without a code change: the isolated Python 3.11 run
+pointed Redis at an unreachable loopback port and all 233 tests passed. This
+falsifies a release-candidate regression and identifies contaminated local
+Redis state as the cause. No rate-limit behavior or test assertion was changed.
+
+Production remains on `aea61c1` with one Railway API instance. The rollout
+owner has now authorized the documented production pause, old-writer drain,
+legacy-claim query, merge, deployment verification, and ingress restoration.
+Those production results are not claimed here; they must be attached to pull
+request #35 after each gate is observed.
