@@ -172,13 +172,17 @@ async def export_csv(
         buf.truncate(0)
 
         for e in rows:
+            error = e.error or ""
+            # Escape only the CSV presentation; stored evidence and JSON stay exact.
+            if error.lstrip().startswith(("=", "+", "-", "@")) or error.startswith(("\t", "\r", "\n")):
+                error = "'" + error
             writer.writerow(
                 [
                     e.id,
                     e.action_id,
                     e.created_at.isoformat() if e.created_at else "",
                     json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
-                    e.error or "",
+                    error,
                     e.prev_hash or "",
                     e.event_hash or "",
                 ]

@@ -295,7 +295,6 @@ async def test_be007_unsigned_status_callback_preserves_attempt_and_audit(qa_api
     assert response.status_code == (401 if configured else 503)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-008: audit CSV exports untrusted formula cells unchanged")
 async def test_audit_csv_neutralizes_spreadsheet_formula_cells(qa_api):
     response = await qa_api.client.post(
         "/v1/audit-events",
