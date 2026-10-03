@@ -58,6 +58,8 @@ def create_token(purpose: str, subject: str, ttl_seconds: int) -> str:
 
 def verify_token(token: str, expected_purpose: str) -> str:
     """Return subject (tenant_id) if the token is valid for `expected_purpose`."""
+    if not token.isascii():
+        raise InvalidOnboardingToken("Malformed token")
     try:
         payload_part, signature_part = token.split(".", 1)
     except ValueError as e:

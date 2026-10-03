@@ -6,6 +6,7 @@ not entered. Known defects are strict xfails linked to the QA findings report.
 
 import csv
 import io
+import json
 import secrets
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -205,10 +206,21 @@ async def test_malformed_ascii_token_classes_fail_closed(qa_api, path, token):
     "path", ["/v1/approvals/act_qa_owner/token-decision",
              "/v1/tenants/recover/exchange", "/v1/tenants/verify-email"],
 )
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-004: non-ASCII token signatures produce HTTP 500")
-async def test_unicode_token_signature_is_a_client_error(qa_api, path):
-    response = await qa_api.client.post(path, json={"token": "invalid.\N{SNOWMAN}"})
+@pytest.mark.parametrize(
+    "token",
+    ["invalid.\N{SNOWMAN}", "\N{SNOWMAN}.invalid", "invalid.\ud800", "\ud800.invalid"],
+    ids=["unicode-signature", "unicode-payload", "surrogate-signature", "surrogate-payload"],
+)
+async def test_unicode_token_signature_is_a_client_error(qa_api, path, token):
+    # BE-004: reject malformed encoding before signing or comparing strings.
+    response = await qa_api.client.post(
+        path, content=json.dumps({"token": token}), headers={"Content-Type": "application/json"}
+    )
     assert response.status_code in (400, 401)
+    async with qa_api.sessions() as session:
+        assert (await session.get(Approval, "act_qa_owner")).decision == "pending"
+        assert (await session.get(Tenant, "ten_qa_owner")).email_verified_at is None
+        assert await session.scalar(select(func.count()).select_from(ApiKey)) == 3
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-005: recovery emits a live key prefix for a test workspace")
