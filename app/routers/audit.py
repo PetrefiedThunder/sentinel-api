@@ -133,7 +133,11 @@ async def verify_chain(
     }
 
 
-@router.get(".csv")
+@router.get(
+    ".csv",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/csv": {"schema": {"type": "string"}}}}},
+)
 async def export_csv(
     action_id: str | None = Query(None, description="Filter to a single action_id"),
     limit: int = Query(10_000, ge=1, le=100_000),
