@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Approval, WebhookDelivery, WebhookEndpoint
+from app.services.webhook_destinations import UnsafeWebhookDestination, pin_webhook_url
 
 log = logging.getLogger(__name__)
 
@@ -149,10 +150,18 @@ async def _deliver_with_retries(
     last_snippet: str | None = None
     success = False
 
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+    async with httpx.AsyncClient(
+        timeout=HTTP_TIMEOUT, trust_env=False, follow_redirects=False
+    ) as client:
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                r = await client.post(endpoint.url, content=raw_body, headers=headers)
+                original_url, pinned_url = await pin_webhook_url(endpoint.url, timeout=HTTP_TIMEOUT)
+                r = await client.post(
+                    pinned_url,
+                    content=raw_body,
+                    headers={**headers, "Host": original_url.netloc.decode("ascii")},
+                    extensions={"sni_hostname": original_url.raw_host.decode("ascii")},
+                )
                 last_status = r.status_code
                 last_snippet = (r.text or "")[:512]
                 if 200 <= r.status_code < 300:
@@ -161,6 +170,10 @@ async def _deliver_with_retries(
                 # 4xx (except 408/429) — don't retry, the customer rejected us
                 if 400 <= r.status_code < 500 and r.status_code not in (408, 429):
                     break
+            except UnsafeWebhookDestination:
+                last_status = None
+                last_snippet = "Webhook destination is not allowed"
+                break
             except httpx.RequestError as e:
                 last_snippet = f"{type(e).__name__}: {str(e)[:400]}"
             if attempt < MAX_ATTEMPTS:

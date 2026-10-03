@@ -15,6 +15,7 @@ from app.auth import get_current_tenant
 from app.db import get_db
 from app.models import Tenant, WebhookDelivery, WebhookEndpoint
 from app.services.pagination import paginate_stmt
+from app.services.webhook_destinations import UnsafeWebhookDestination, validate_webhook_url
 from app.services.webhooks import generate_secret
 
 router = APIRouter()
@@ -67,8 +68,10 @@ async def create_webhook(
 ):
     """Register a new webhook endpoint. The `secret` is returned ONCE — store it,
     we don't expose it again. Customer uses it to verify HMAC signatures."""
-    if not payload.url.startswith(("https://", "http://")):
-        raise HTTPException(400, "url must start with https:// (or http:// for localhost)")
+    try:
+        validate_webhook_url(payload.url)
+    except UnsafeWebhookDestination as exc:
+        raise HTTPException(400, str(exc)) from exc
     if payload.event_filter:
         bad = [e for e in payload.event_filter if e not in ALLOWED_EVENTS]
         if bad:

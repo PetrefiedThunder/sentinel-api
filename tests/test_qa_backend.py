@@ -177,14 +177,18 @@ def test_onboarding_rejects_weak_signing_configuration(monkeypatch):
         onboarding._sign("qa-non-token-payload")
 
 
-@pytest.mark.parametrize("url", ["http://127.0.0.1/hook", "http://10.0.0.1/hook", "http://[::1]/hook"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-003: private webhook targets are accepted without an egress guard")
-async def test_webhook_registration_rejects_private_network_targets(qa_api, url):
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("host", ["127.0.0.1", "10.0.0.1", "[::1]"])
+async def test_webhook_registration_rejects_private_network_targets(qa_api, scheme, host):
+    # BE-003: reject unsafe registrations without persisting an endpoint.
     # Registration alone has no outbound request. Never resolve or call the URL.
+    url = f"{scheme}://{host}/hook"
     response = await qa_api.client.post("/v1/webhooks", json={"url": url}, headers=bearer(qa_api))
     if response.status_code not in (200, 400, 422):
         pytest.fail("Webhook registration failed outside the destination-validation boundary")
     assert response.status_code in (400, 422)
+    async with qa_api.sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(WebhookEndpoint)) == 1
 
 
 @pytest.mark.parametrize(
