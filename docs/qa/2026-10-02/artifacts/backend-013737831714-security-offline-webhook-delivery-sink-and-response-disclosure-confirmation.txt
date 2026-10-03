@@ -1,0 +1,3 @@
+mock_outbound_destination: http://127.0.0.1:9000/internal
+response_snippet_persisted: SYNTHETIC_INTERNAL_RESPONSE
+Network calls: zero; AsyncClient and SessionLocal replaced by in-memory mocks.

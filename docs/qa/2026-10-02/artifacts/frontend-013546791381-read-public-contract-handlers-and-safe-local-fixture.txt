@@ -1,0 +1,790 @@
+import asyncio
+from contextlib import contextmanager
+
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.auth import get_current_tenant
+from app.db import Base, get_db
+from app.main import app
+from app.models import Tenant
+
+TENANT_ID = "ten_test"
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+async def make_sqlite_session():
+    import app.models  # noqa: F401
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session = session_factory()
+    tenant = Tenant(id=TENANT_ID, name="Test Tenant", email="team@example.com")
+    session.add(tenant)
+    await session.commit()
+    return engine, session, tenant
+
+
+@contextmanager
+def client_for(session, tenant=None):
+    tenant = tenant or Tenant(id=TENANT_ID, name="Test Tenant", email="team@example.com")
+
+    async def override_get_db():
+        yield session
+
+    async def override_get_current_tenant():
+        return tenant
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_tenant] = override_get_current_tenant
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+import asyncio
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import get_current_tenant
+from app.db import get_db
+from app.models import Approval, Tenant
+from app.schemas import ApprovalCreate, DecisionRequest, TokenDecisionRequest
+from app.services.approval_service import create_approval
+from app.services.approval_tokens import InvalidApprovalToken, verify_decision_token
+from app.services.audit_log import append_audit_event
+from app.services.contacts import find_active_sms_contact, sms_approver_phone
+from app.services.decision_bus import bus, notify_decision
+from app.services.idempotency import run_with_idempotency
+from app.services.nonce_store import is_nonce_consumed, mark_nonce_consumed, token_nonce
+from app.services.pagination import paginate_stmt
+from app.services.webhooks import dispatch_approval_webhook
+
+router = APIRouter()
+
+
+def _utcnow():
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+async def _rollback_or_reraise_integrity_error(db, error: IntegrityError) -> None:
+    """Clean up an integrity failure without hiding it behind cleanup errors."""
+    try:
+        await db.rollback()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        raise error from None
+
+
+def _serialize(a: Approval) -> dict:
+    return {
+        "action_id": a.id,
+        "id": a.id,
+        "tenant_id": a.tenant_id,
+        "function_name": a.function_name,
+        "arguments": a.arguments,
+        "risk_level": a.risk_level,
+        "approvers": a.approvers,
+        "timeout_seconds": a.timeout_seconds,
+        "decision": a.decision,
+        "status": a.decision,
+        "decided_by": a.decided_by,
+        "decided_at": a.decided_at,
+        "reason": a.reason,
+        "created_at": a.created_at,
+    }
+
+
+@router.post("")
+async def create(
+    payload: ApprovalCreate,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    """Create an approval. Pass `Idempotency-Key: <opaque>` to make retries
+    safe — the same key replays the original response without firing
+    duplicate emails or creating duplicate rows."""
+
+    async def _do_create() -> dict:
+        for approver in payload.approvers:
+            phone = sms_approver_phone(approver)
+            if phone and not await find_active_sms_contact(db, tenant.id, phone):
+                raise HTTPException(
+                    400, "SMS approver requires active SMS consent contact"
+                )
+        approval = await create_approval(
+            db, tenant, payload, background_tasks=background_tasks
+        )
+        return {
+            "action_id": approval.id,
+            "status": approval.decision,
+            **_serialize(approval),
+        }
+
+    return await run_with_idempotency(
+        db,
+        tenant_id=tenant.id,
+        idempotency_key=idempotency_key,
+        method="POST",
+        path="/v1/approvals",
+        request_body=payload.model_dump(),
+        handler=_do_create,
+    )
+
+
+@router.get("")
+async def list_approvals(
+    status: str | None = None,
+    limit: int | None = Query(None, ge=1, le=100),
+    cursor: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """List approvals.
+
+    Backward-compatible: with no `limit` and no `cursor`, returns the legacy
+    top-200 bare array. With either present, returns the cursor-paginated
+    envelope {data, has_more, next_cursor}.
+    """
+    base = select(Approval).where(Approval.tenant_id == tenant.id)
+    if status:
+        base = base.where(Approval.decision == status)
+
+    if limit is None and cursor is None:
+        # Legacy shape — don't break existing SDK clients
+        stmt = base.order_by(Approval.created_at.desc(), Approval.id.desc()).limit(200)
+        result = await db.execute(stmt)
+        return [_serialize(a) for a in result.scalars().all()]
+
+    page = await paginate_stmt(db, base, Approval, limit=limit or 50, cursor=cursor)
+    return {
+        "data": [_serialize(a) for a in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }
+
+
+@router.get("/{action_id}/wait")
+async def wait_for_decision(
+    action_id: str,
+    timeout: float = Query(30, ge=1, le=300, description="Seconds to wait for a decision"),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Long-poll for a decision. Uses Postgres LISTEN/NOTIFY for sub-100ms
+    detection, with a 100ms DB fallback poll to handle missed notifications.
+    """
+    approval = await db.get(Approval, action_id)
+    if not approval or approval.tenant_id != tenant.id:
+        raise HTTPException(404, "Not found")
+    if approval.decision != "pending":
+        return _serialize(approval)
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    poll_interval = 0.1
+    # Race: NOTIFY-wait against a poll loop. Whichever wakes first wins.
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            return _serialize(approval)
+        wait_window = min(remaining, 5.0)  # cap each NOTIFY-wait at 5s
+        notify_task = asyncio.create_task(bus.wait_for(action_id, wait_window))
+        poll_task = asyncio.create_task(asyncio.sleep(poll_interval))
+        done, pending = await asyncio.wait(
+            {notify_task, poll_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in pending:
+            t.cancel()
+        await db.refresh(approval)
+        if approval.decision != "pending":
+            return _serialize(approval)
+
+
+@router.get("/{action_id}")
+async def get_approval(
+    action_id: str,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    approval = await db.get(Approval, action_id)
+    if not approval or approval.tenant_id != tenant.id:
+        raise HTTPException(404, "Not found")
+    return _serialize(approval)
+
+
+@router.post("/{action_id}/decision")
+async def decide(
+    action_id: str,
+    payload: DecisionRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    tenant_id = tenant.id
+    try:
+        approval = await db.scalar(
+            select(Approval)
+            .where(Approval.id == action_id, Approval.tenant_id == tenant_id)
+            # key_share=True without read=True renders FOR NO KEY UPDATE on
+            # PostgreSQL: serialize decisions without blocking audit FK checks.
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        if not approval:
+            raise HTTPException(404, "Not found")
+        if approval.decision != "pending":
+            raise HTTPException(400, f"Already {approval.decision}")
+        if payload.decision not in ("approved", "rejected"):
+            raise HTTPException(400, "decision must be 'approved' or 'rejected'")
+        approval.decision = payload.decision
+        approval.decided_by = payload.decided_by
+        approval.decided_at = _utcnow()
+        approval.reason = payload.reason
+        await append_audit_event(
+            db, tenant_id, action_id, f"decision:{payload.decision}", commit=False
+        )
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+    await db.refresh(approval)
+    await notify_decision(db, approval.id)
+    await dispatch_approval_webhook(db, approval)
+    return _serialize(approval)
+
+
+@router.post("/{action_id}/token-decision")
+async def decide_with_token(
+    action_id: str,
+    payload: TokenDecisionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        decision = verify_decision_token(payload.token, action_id)
+    except (InvalidApprovalToken, ValueError):
+        raise HTTPException(401, "Invalid or expired approval token") from None
+
+    # Replay protection: each token is single-use, tracked server-side
+    # (persisted, so it survives restarts and any approval-state changes).
+    nonce = token_nonce(payload.token)
+    try:
+        if await is_nonce_consumed(db, nonce):
+            raise HTTPException(409, "Approval token already used")
+        approval = await db.scalar(
+            select(Approval)
+            .where(Approval.id == action_id)
+            # FOR NO KEY UPDATE keeps audit FK reads compatible with this lock.
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        if not approval:
+            raise HTTPException(404, "Not found")
+        # The same token may have committed while this request waited for the
+        # approval lock. Preserve 409 for replay, 400 for a different token.
+        if await is_nonce_consumed(db, nonce):
+            raise HTTPException(409, "Approval token already used")
+        if approval.decision != "pending":
+            raise HTTPException(400, f"Already {approval.decision}")
+
+        approval.decision = decision
+        approval.decided_by = "signed_link"
+        approval.decided_at = _utcnow()
+        approval.reason = "Signed approval link"
+        mark_nonce_consumed(db, nonce, action_id)
+        await append_audit_event(
+            db, approval.tenant_id, action_id, f"decision:{decision}", commit=False
+        )
+        await db.commit()
+    except IntegrityError as error:
+        await _rollback_or_reraise_integrity_error(db, error)
+        # Audit failures are not necessarily nonce conflicts. Check the exact
+        # nonce after rollback before translating a constraint error to 409.
+        try:
+            consumed = await is_nonce_consumed(db, nonce)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await _rollback_or_reraise_integrity_error(db, error)
+            raise error from None
+        await _rollback_or_reraise_integrity_error(db, error)
+        if consumed:
+            raise HTTPException(409, "Approval token already used") from None
+        raise
+    except BaseException:
+        await db.rollback()
+        raise
+    await db.refresh(approval)
+    await notify_decision(db, approval.id)
+    await dispatch_approval_webhook(db, approval)
+    return _serialize(approval)
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import generate_api_key, get_current_tenant
+from app.db import get_db
+from app.models import ApiKey, Tenant
+from app.schemas import TenantSettingsUpdate, TenantSignup, _is_supported_approver
+from app.services.onboarding import (
+    InvalidOnboardingToken,
+    send_recovery_email,
+    send_welcome_email,
+    verify_token,
+)
+from app.services.rate_limit import enforce as rate_limit
+
+router = APIRouter()
+
+BLOCKED_DOMAINS = {
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "icloud.com",
+    "proton.me",
+    "protonmail.com",
+}
+
+
+@router.post("/signup")
+async def signup(
+    payload: TenantSignup,
+    background: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if "@" not in payload.email:
+        raise HTTPException(400, "Invalid email")
+    domain = payload.email.split("@")[-1].lower()
+    if domain in BLOCKED_DOMAINS:
+        raise HTTPException(
+            400, "Work email required (personal email domains not allowed)"
+        )
+    # Throttle per IP (5/hour) AND per email-domain (10/hour). Edge proxies
+    # rewrite client IPs through internal NAT, so an IP-only limit is leaky;
+    # the domain limit catches mass signups against one company regardless of
+    # origin IP.
+    await rate_limit(request, bucket="signup", limit=5, window_seconds=3600)
+    await rate_limit(
+        request,
+        bucket="signup-domain",
+        limit=10,
+        window_seconds=3600,
+        key_suffix=domain,
+        by_ip=False,
+    )
+    existing = await db.execute(select(Tenant).where(Tenant.email == payload.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(400, "Email already registered")
+    tenant = Tenant(name=payload.name, email=payload.email, mode=payload.mode)
+    db.add(tenant)
+    await db.flush()
+    raw, prefix, key_hash = generate_api_key(mode=payload.mode)
+    api_key = ApiKey(
+        tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="default"
+    )
+    db.add(api_key)
+    await db.commit()
+    await db.refresh(tenant)
+
+    # Live tenants get the welcome+verify email. Test workspaces don't —
+    # they're for integration testing, not a real human signup.
+    if tenant.mode == "live":
+        background.add_task(send_welcome_email, tenant, raw)
+
+    return {"tenant_id": tenant.id, "api_key": raw, "mode": tenant.mode}
+
+
+# ── Email verification ────────────────────────────────────────────────
+class VerifyPayload(BaseModel):
+    token: str
+
+
+@router.post("/verify-email")
+async def verify_email(payload: VerifyPayload, db: AsyncSession = Depends(get_db)):
+    try:
+        tenant_id = verify_token(payload.token, expected_purpose="verify")
+    except InvalidOnboardingToken as e:
+        raise HTTPException(400, f"Invalid or expired verification link: {e}") from e
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Workspace not found")
+    if tenant.email_verified_at is None:
+        tenant.email_verified_at = datetime.utcnow()
+        await db.commit()
+    return {
+        "tenant_id": tenant.id,
+        "email": tenant.email,
+        "email_verified_at": tenant.email_verified_at,
+    }
+
+
+# ── API key recovery (magic-link, rotates key) ────────────────────────
+class RecoverRequest(BaseModel):
+    email: str
+
+
+@router.post("/recover/request")
+async def recover_request(
+    payload: RecoverRequest,
+    background: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 1: user enters email → we email them a magic link.
+
+    We always return 204, regardless of whether the email matches a real
+    tenant, so this endpoint cannot be used to enumerate accounts.
+    """
+    # 3 recovery emails per IP per hour. Throttles harassment + cost-bomb.
+    await rate_limit(request, bucket="recover", limit=3, window_seconds=3600)
+    email = (payload.email or "").strip().lower()
+    if "@" not in email:
+        # never reveal whether email exists — always pretend success
+        return {"ok": True}
+    result = await db.execute(select(Tenant).where(Tenant.email == email))
+    tenant = result.scalar_one_or_none()
+    if tenant is not None:
+        background.add_task(send_recovery_email, tenant)
+    return {"ok": True}
+
+
+class RecoverExchange(BaseModel):
+    token: str
+
+
+@router.post("/recover/exchange")
+async def recover_exchange(
+    payload: RecoverExchange, db: AsyncSession = Depends(get_db)
+):
+    """Step 2: dashboard POSTs the token from the magic link. We revoke all
+    existing keys and issue a brand-new one. The new key is returned ONCE."""
+    try:
+        tenant_id = verify_token(payload.token, expected_purpose="recover")
+    except InvalidOnboardingToken as e:
+        raise HTTPException(400, f"Invalid or expired recovery link: {e}") from e
+
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Workspace not found")
+
+    # revoke every active key on this tenant
+    now = datetime.utcnow()
+    existing = await db.execute(
+        select(ApiKey).where(ApiKey.tenant_id == tenant.id, ApiKey.revoked_at.is_(None))
+    )
+    for k in existing.scalars():
+        k.revoked_at = now
+
+    # issue a new key
+    raw, prefix, key_hash = generate_api_key()
+    db.add(
+        ApiKey(
+            tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="recovery"
+        )
+    )
+    await db.commit()
+    return {"tenant_id": tenant.id, "api_key": raw}
+
+
+def _serialize_tenant(t: Tenant) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "email": t.email,
+        "default_approvers": t.default_approvers or [],
+        "email_verified_at": t.email_verified_at,
+        "mode": t.mode,
+        "created_at": t.created_at,
+    }
+
+
+@router.get("/me")
+async def get_me(tenant: Tenant = Depends(get_current_tenant)):
+    """Current tenant settings (default approvers, name, email)."""
+    return _serialize_tenant(tenant)
+
+
+@router.patch("/me")
+async def update_me(
+    payload: TenantSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Update mutable settings on the current tenant (currently: default_approvers)."""
+    if payload.default_approvers is not None:
+        normalized = [a.strip() for a in payload.default_approvers if isinstance(a, str) and a.strip()]
+        for a in normalized:
+            if not _is_supported_approver(a):
+                raise HTTPException(
+                    400,
+                    f"Invalid approver '{a}'. Use email, 'mailto:...', or 'sms:+1...'."
+                )
+        tenant.default_approvers = normalized
+    await db.commit()
+    await db.refresh(tenant)
+    return _serialize_tenant(tenant)
+import csv
+import io
+import json
+from datetime import UTC, datetime
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import get_current_tenant
+from app.db import get_db
+from app.models import Approval, AuditEvent, Tenant
+from app.schemas import AuditEventCreate
+
+# _compute_hash is the canonical hash used when events are appended
+# (see app/services/audit_log.py) — verification must replicate it exactly.
+from app.services.audit_log import _compute_hash, append_audit_event
+from app.services.pagination import paginate_stmt
+from app.services.tsa import TSAError, timestamp_audit_event
+
+router = APIRouter()
+logger = structlog.get_logger(__name__)
+
+
+def _serialize(e: AuditEvent) -> dict:
+    return {
+        "id": e.id,
+        "action_id": e.action_id,
+        "execution_result": e.execution_result,
+        "error": e.error,
+        "prev_hash": e.prev_hash,
+        "event_hash": e.event_hash,
+        "tsa_timestamp": e.tsa_timestamp,
+        "created_at": e.created_at,
+    }
+
+
+@router.post("")
+async def emit(
+    payload: AuditEventCreate,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    # Verify the action belongs to this tenant before recording an event for it
+    approval = await db.get(Approval, payload.action_id)
+    if not approval or approval.tenant_id != tenant.id:
+        raise HTTPException(404, "Not found")
+    event = await append_audit_event(
+        db, tenant.id, payload.action_id, payload.execution_result, payload.error
+    )
+    # Best-effort RFC 3161 timestamping: a no-op unless TSA_URL is configured,
+    # and a TSA outage must never fail the audit write itself.
+    try:
+        await timestamp_audit_event(db, event)
+    except TSAError:
+        logger.warning("tsa_timestamp_failed", event_id=event.id, exc_info=True)
+    return _serialize(event)
+
+
+@router.get("")
+async def list_events(
+    action_id: str | None = Query(None, description="Filter to a single action_id"),
+    limit: int | None = Query(None, ge=1, le=500),
+    cursor: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """List audit events.
+
+    Backward-compatible: no limit + no cursor → legacy top-100 bare array.
+    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+    """
+    base = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    if action_id:
+        base = base.where(AuditEvent.action_id == action_id)
+
+    if limit is None and cursor is None:
+        stmt = base.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(100)
+        result = await db.execute(stmt)
+        return [_serialize(e) for e in result.scalars().all()]
+
+    page = await paginate_stmt(db, base, AuditEvent, limit=limit or 100, cursor=cursor)
+    return {
+        "data": [_serialize(e) for e in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }
+
+
+@router.get("/verify")
+async def verify_chain(
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Walk the tenant's full audit hash chain and prove tamper-evidence.
+
+    Recomputes each event's hash from its stored payload (same computation as
+    app/services/audit_log.py) and checks the prev_hash linkage. Read-only.
+    """
+    stmt = (
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == tenant.id)
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+    )
+    result = await db.execute(stmt)
+    events = result.scalars().all()
+
+    valid = True
+    first_invalid_event_id = None
+    prev_event_hash = None
+
+    for e in events:
+        # Same payload shape append_audit_event hashes at write time.
+        payload = {
+            "action_id": e.action_id,
+            "execution_result": e.execution_result,
+            "error": e.error,
+        }
+        expected_hash = _compute_hash(e.prev_hash, payload)
+        if e.event_hash != expected_hash or e.prev_hash != prev_event_hash:
+            valid = False
+            first_invalid_event_id = e.id
+            break
+        prev_event_hash = e.event_hash
+
+    return {
+        "valid": valid,
+        "events_checked": len(events),
+        "first_invalid_event_id": first_invalid_event_id,
+        "checked_at": datetime.now(UTC).isoformat(),
+    }
+
+
+@router.get(".csv")
+async def export_csv(
+    action_id: str | None = Query(None, description="Filter to a single action_id"),
+    limit: int = Query(10_000, ge=1, le=100_000),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Stream audit events as CSV for offline analysis / compliance reviews.
+
+    Customers ask for this constantly during procurement — they want to ingest
+    the audit log into their own SIEM. Keep the column set stable; downstream
+    parsers depend on the header row.
+    """
+    stmt = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    if action_id:
+        stmt = stmt.where(AuditEvent.action_id == action_id)
+    stmt = stmt.order_by(AuditEvent.created_at.asc()).limit(limit)
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(
+            [
+                "id",
+                "action_id",
+                "created_at_utc",
+                "execution_result_json",
+                "error",
+                "prev_hash",
+                "event_hash",
+            ]
+        )
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        for e in rows:
+            writer.writerow(
+                [
+                    e.id,
+                    e.action_id,
+                    e.created_at.isoformat() if e.created_at else "",
+                    json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
+                    e.error or "",
+                    e.prev_hash or "",
+                    e.event_hash or "",
+                ]
+            )
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="audit-{tenant.id}.csv"',
+        },
+    )
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import get_current_tenant
+from app.db import get_db
+from app.models import Tenant
+from app.schemas import ApproverContactCreate
+from app.services.contacts import (
+    create_or_reactivate_sms_contact,
+    list_contacts,
+    revoke_contact,
+    serialize_contact,
+)
+
+router = APIRouter()
+
+
+@router.post("")
+async def create_contact(
+    payload: ApproverContactCreate,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    if not payload.consent_attested:
+        raise HTTPException(400, "SMS consent must be explicitly attested")
+    contact = await create_or_reactivate_sms_contact(
+        db,
+        tenant.id,
+        payload.phone_number,
+        payload.display_name,
+        payload.consent_source,
+        payload.consent_note,
+    )
+    return serialize_contact(contact)
+
+
+@router.get("")
+async def list_approver_contacts(
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    return [serialize_contact(contact) for contact in await list_contacts(db, tenant.id)]
+
+
+@router.delete("/{contact_id}")
+async def delete_contact(
+    contact_id: str,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    contact = await revoke_contact(db, tenant.id, contact_id)
+    if not contact:
+        raise HTTPException(404, "Not found")
+    return serialize_contact(contact)

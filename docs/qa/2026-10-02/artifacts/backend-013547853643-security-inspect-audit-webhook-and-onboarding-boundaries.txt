@@ -1,0 +1,806 @@
+     1	import csv
+     2	import io
+     3	import json
+     4	from datetime import UTC, datetime
+     5	
+     6	import structlog
+     7	from fastapi import APIRouter, Depends, HTTPException, Query
+     8	from fastapi.responses import StreamingResponse
+     9	from sqlalchemy import select
+    10	from sqlalchemy.ext.asyncio import AsyncSession
+    11	
+    12	from app.auth import get_current_tenant
+    13	from app.db import get_db
+    14	from app.models import Approval, AuditEvent, Tenant
+    15	from app.schemas import AuditEventCreate
+    16	
+    17	# _compute_hash is the canonical hash used when events are appended
+    18	# (see app/services/audit_log.py) — verification must replicate it exactly.
+    19	from app.services.audit_log import _compute_hash, append_audit_event
+    20	from app.services.pagination import paginate_stmt
+    21	from app.services.tsa import TSAError, timestamp_audit_event
+    22	
+    23	router = APIRouter()
+    24	logger = structlog.get_logger(__name__)
+    25	
+    26	
+    27	def _serialize(e: AuditEvent) -> dict:
+    28	    return {
+    29	        "id": e.id,
+    30	        "action_id": e.action_id,
+    31	        "execution_result": e.execution_result,
+    32	        "error": e.error,
+    33	        "prev_hash": e.prev_hash,
+    34	        "event_hash": e.event_hash,
+    35	        "tsa_timestamp": e.tsa_timestamp,
+    36	        "created_at": e.created_at,
+    37	    }
+    38	
+    39	
+    40	@router.post("")
+    41	async def emit(
+    42	    payload: AuditEventCreate,
+    43	    db: AsyncSession = Depends(get_db),
+    44	    tenant: Tenant = Depends(get_current_tenant),
+    45	):
+    46	    # Verify the action belongs to this tenant before recording an event for it
+    47	    approval = await db.get(Approval, payload.action_id)
+    48	    if not approval or approval.tenant_id != tenant.id:
+    49	        raise HTTPException(404, "Not found")
+    50	    event = await append_audit_event(
+    51	        db, tenant.id, payload.action_id, payload.execution_result, payload.error
+    52	    )
+    53	    # Best-effort RFC 3161 timestamping: a no-op unless TSA_URL is configured,
+    54	    # and a TSA outage must never fail the audit write itself.
+    55	    try:
+    56	        await timestamp_audit_event(db, event)
+    57	    except TSAError:
+    58	        logger.warning("tsa_timestamp_failed", event_id=event.id, exc_info=True)
+    59	    return _serialize(event)
+    60	
+    61	
+    62	@router.get("")
+    63	async def list_events(
+    64	    action_id: str | None = Query(None, description="Filter to a single action_id"),
+    65	    limit: int | None = Query(None, ge=1, le=500),
+    66	    cursor: str | None = Query(None),
+    67	    db: AsyncSession = Depends(get_db),
+    68	    tenant: Tenant = Depends(get_current_tenant),
+    69	):
+    70	    """List audit events.
+    71	
+    72	    Backward-compatible: no limit + no cursor → legacy top-100 bare array.
+    73	    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+    74	    """
+    75	    base = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    76	    if action_id:
+    77	        base = base.where(AuditEvent.action_id == action_id)
+    78	
+    79	    if limit is None and cursor is None:
+    80	        stmt = base.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(100)
+    81	        result = await db.execute(stmt)
+    82	        return [_serialize(e) for e in result.scalars().all()]
+    83	
+    84	    page = await paginate_stmt(db, base, AuditEvent, limit=limit or 100, cursor=cursor)
+    85	    return {
+    86	        "data": [_serialize(e) for e in page.items],
+    87	        "has_more": page.has_more,
+    88	        "next_cursor": page.next_cursor,
+    89	    }
+    90	
+    91	
+    92	@router.get("/verify")
+    93	async def verify_chain(
+    94	    db: AsyncSession = Depends(get_db),
+    95	    tenant: Tenant = Depends(get_current_tenant),
+    96	):
+    97	    """Walk the tenant's full audit hash chain and prove tamper-evidence.
+    98	
+    99	    Recomputes each event's hash from its stored payload (same computation as
+   100	    app/services/audit_log.py) and checks the prev_hash linkage. Read-only.
+   101	    """
+   102	    stmt = (
+   103	        select(AuditEvent)
+   104	        .where(AuditEvent.tenant_id == tenant.id)
+   105	        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+   106	    )
+   107	    result = await db.execute(stmt)
+   108	    events = result.scalars().all()
+   109	
+   110	    valid = True
+   111	    first_invalid_event_id = None
+   112	    prev_event_hash = None
+   113	
+   114	    for e in events:
+   115	        # Same payload shape append_audit_event hashes at write time.
+   116	        payload = {
+   117	            "action_id": e.action_id,
+   118	            "execution_result": e.execution_result,
+   119	            "error": e.error,
+   120	        }
+   121	        expected_hash = _compute_hash(e.prev_hash, payload)
+   122	        if e.event_hash != expected_hash or e.prev_hash != prev_event_hash:
+   123	            valid = False
+   124	            first_invalid_event_id = e.id
+   125	            break
+   126	        prev_event_hash = e.event_hash
+   127	
+   128	    return {
+   129	        "valid": valid,
+   130	        "events_checked": len(events),
+   131	        "first_invalid_event_id": first_invalid_event_id,
+   132	        "checked_at": datetime.now(UTC).isoformat(),
+   133	    }
+   134	
+   135	
+   136	@router.get(".csv")
+   137	async def export_csv(
+   138	    action_id: str | None = Query(None, description="Filter to a single action_id"),
+   139	    limit: int = Query(10_000, ge=1, le=100_000),
+   140	    db: AsyncSession = Depends(get_db),
+   141	    tenant: Tenant = Depends(get_current_tenant),
+   142	):
+   143	    """Stream audit events as CSV for offline analysis / compliance reviews.
+   144	
+   145	    Customers ask for this constantly during procurement — they want to ingest
+   146	    the audit log into their own SIEM. Keep the column set stable; downstream
+   147	    parsers depend on the header row.
+   148	    """
+   149	    stmt = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+   150	    if action_id:
+   151	        stmt = stmt.where(AuditEvent.action_id == action_id)
+   152	    stmt = stmt.order_by(AuditEvent.created_at.asc()).limit(limit)
+   153	    result = await db.execute(stmt)
+   154	    rows = result.scalars().all()
+   155	
+   156	    def generate():
+   157	        buf = io.StringIO()
+   158	        writer = csv.writer(buf)
+   159	        writer.writerow(
+   160	            [
+   161	                "id",
+   162	                "action_id",
+   163	                "created_at_utc",
+   164	                "execution_result_json",
+   165	                "error",
+   166	                "prev_hash",
+   167	                "event_hash",
+   168	            ]
+   169	        )
+   170	        yield buf.getvalue()
+   171	        buf.seek(0)
+   172	        buf.truncate(0)
+   173	
+   174	        for e in rows:
+   175	            writer.writerow(
+   176	                [
+   177	                    e.id,
+   178	                    e.action_id,
+   179	                    e.created_at.isoformat() if e.created_at else "",
+   180	                    json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
+   181	                    e.error or "",
+   182	                    e.prev_hash or "",
+   183	                    e.event_hash or "",
+   184	                ]
+   185	            )
+   186	            yield buf.getvalue()
+   187	            buf.seek(0)
+   188	            buf.truncate(0)
+   189	
+   190	    return StreamingResponse(
+   191	        generate(),
+   192	        media_type="text/csv",
+   193	        headers={
+   194	            "Content-Disposition": f'attachment; filename="audit-{tenant.id}.csv"',
+   195	        },
+   196	    )
+     1	import hashlib
+     2	import json
+     3	
+     4	from sqlalchemy import desc, select, text
+     5	
+     6	from app.models import AuditEvent
+     7	
+     8	
+     9	def _compute_hash(prev_hash, payload):
+    10	    serialized = json.dumps(payload, sort_keys=True, default=str)
+    11	    data = (prev_hash or "") + serialized
+    12	    return hashlib.sha256(data.encode()).hexdigest()
+    13	
+    14	
+    15	async def append_audit_event(
+    16	    db, tenant_id, action_id, execution_result, error=None, *, commit=True
+    17	):
+    18	    # Serialize concurrent appends per tenant. Without this, two simultaneous
+    19	    # appends both read the same "previous" event and fork the chain — found
+    20	    # in production by GET /v1/audit-events/verify on 2026-06-10 (two forks
+    21	    # left by the 5-way-concurrent approval test). The Postgres advisory lock
+    22	    # is held until the surrounding transaction commits; sqlite (tests) is
+    23	    # single-writer so the lock is unnecessary there.
+    24	    bind = db.get_bind()
+    25	    if bind is not None and bind.dialect.name == "postgresql":
+    26	        await db.execute(
+    27	            text("SELECT pg_advisory_xact_lock(hashtext(:tid))"),
+    28	            {"tid": tenant_id},
+    29	        )
+    30	
+    31	    result = await db.execute(
+    32	        select(AuditEvent)
+    33	        .where(AuditEvent.tenant_id == tenant_id)
+    34	        # id tiebreak matters: verify walks (created_at asc, id asc), so the
+    35	        # chain head must be the max of that same ordering.
+    36	        .order_by(desc(AuditEvent.created_at), desc(AuditEvent.id))
+    37	        .limit(1)
+    38	    )
+    39	    prev = result.scalar_one_or_none()
+    40	    prev_hash = prev.event_hash if prev else None
+    41	
+    42	    payload = {
+    43	        "action_id": action_id,
+    44	        "execution_result": execution_result,
+    45	        "error": error,
+    46	    }
+    47	    event_hash = _compute_hash(prev_hash, payload)
+    48	
+    49	    event = AuditEvent(
+    50	        tenant_id=tenant_id,
+    51	        action_id=action_id,
+    52	        execution_result=execution_result,
+    53	        error=error,
+    54	        prev_hash=prev_hash,
+    55	        event_hash=event_hash,
+    56	    )
+    57	    db.add(event)
+    58	    if commit:
+    59	        await db.commit()
+    60	        await db.refresh(event)
+    61	    else:
+    62	        # Decision routes own the transaction containing their audit evidence.
+    63	        await db.flush()
+    64	    return event
+     1	"""Webhook management endpoints — CRUD on webhook_endpoints + read deliveries.
+     2	
+     3	Authenticated with the standard per-tenant API key (Authorization: Bearer [REDACTED]
+     4	"""
+     5	from __future__ import annotations
+     6	
+     7	from datetime import datetime
+     8	
+     9	from fastapi import APIRouter, Depends, HTTPException, Query
+    10	from pydantic import BaseModel
+    11	from sqlalchemy import desc, select
+    12	from sqlalchemy.ext.asyncio import AsyncSession
+    13	
+    14	from app.auth import get_current_tenant
+    15	from app.db import get_db
+    16	from app.models import Tenant, WebhookDelivery, WebhookEndpoint
+    17	from app.services.pagination import paginate_stmt
+    18	from app.services.webhooks import generate_secret
+    19	
+    20	router = APIRouter()
+    21	
+    22	
+    23	ALLOWED_EVENTS = {"approval.approved", "approval.rejected"}
+    24	
+    25	
+    26	class CreateWebhookRequest(BaseModel):
+    27	    url: str
+    28	    description: str | None = None
+    29	    event_filter: list[str] | None = None  # empty/None = all events
+    30	
+    31	
+    32	def _serialize_endpoint(e: WebhookEndpoint, *, include_secret: bool = False) -> dict:
+    33	    out = {
+    34	        "id": e.id,
+    35	        "url": e.url,
+    36	        "description": e.description,
+    37	        "event_filter": e.event_filter or [],
+    38	        "created_at": e.created_at,
+    39	        "disabled_at": e.disabled_at,
+    40	        "last_used_at": e.last_used_at,
+    41	        "last_status_code": e.last_status_code,
+    42	    }
+    43	    if include_secret:
+    44	        out["secret"] = e.secret  # only on creation
+    45	    return out
+    46	
+    47	
+    48	def _serialize_delivery(d: WebhookDelivery) -> dict:
+    49	    return {
+    50	        "id": d.id,
+    51	        "endpoint_id": d.endpoint_id,
+    52	        "event_type": d.event_type,
+    53	        "action_id": d.action_id,
+    54	        "attempt": d.attempt,
+    55	        "status_code": d.status_code,
+    56	        "response_snippet": d.response_snippet,
+    57	        "delivered_at": d.delivered_at,
+    58	        "created_at": d.created_at,
+    59	    }
+    60	
+    61	
+    62	@router.post("")
+    63	async def create_webhook(
+    64	    payload: CreateWebhookRequest,
+    65	    db: AsyncSession = Depends(get_db),
+    66	    tenant: Tenant = Depends(get_current_tenant),
+    67	):
+    68	    """Register a new webhook endpoint. The `secret` is returned ONCE — store it,
+    69	    we don't expose it again. Customer uses it to verify HMAC signatures."""
+    70	    if not payload.url.startswith(("https://", "http://")):
+    71	        raise HTTPException(400, "url must start with https:// (or http:// for localhost)")
+    72	    if payload.event_filter:
+    73	        bad = [e for e in payload.event_filter if e not in ALLOWED_EVENTS]
+    74	        if bad:
+    75	            raise HTTPException(
+    76	                400,
+    77	                f"Unknown event(s): {bad}. Allowed: {sorted(ALLOWED_EVENTS)}",
+    78	            )
+    79	
+    80	    secret = generate_secret()
+    81	    endpoint = WebhookEndpoint(
+    82	        tenant_id=tenant.id,
+    83	        url=payload.url,
+    84	        secret=secret,
+    85	        description=payload.description,
+    86	        event_filter=payload.event_filter or None,
+    87	    )
+    88	    db.add(endpoint)
+    89	    await db.commit()
+    90	    await db.refresh(endpoint)
+    91	    return _serialize_endpoint(endpoint, include_secret=True)
+    92	
+    93	
+    94	@router.get("")
+    95	async def list_webhooks(
+    96	    db: AsyncSession = Depends(get_db),
+    97	    tenant: Tenant = Depends(get_current_tenant),
+    98	):
+    99	    """List this tenant's webhook endpoints. Secrets are NOT included."""
+   100	    result = await db.execute(
+   101	        select(WebhookEndpoint)
+   102	        .where(WebhookEndpoint.tenant_id == tenant.id)
+   103	        .order_by(desc(WebhookEndpoint.created_at))
+   104	    )
+   105	    return [_serialize_endpoint(e) for e in result.scalars()]
+   106	
+   107	
+   108	@router.delete("/{endpoint_id}")
+   109	async def disable_webhook(
+   110	    endpoint_id: str,
+   111	    db: AsyncSession = Depends(get_db),
+   112	    tenant: Tenant = Depends(get_current_tenant),
+   113	):
+   114	    """Soft-disable an endpoint (we keep its delivery history for audit)."""
+   115	    endpoint = await db.get(WebhookEndpoint, endpoint_id)
+   116	    if endpoint is None or endpoint.tenant_id != tenant.id:
+   117	        raise HTTPException(404, "Webhook not found")
+   118	    if endpoint.disabled_at is None:
+   119	        endpoint.disabled_at = datetime.utcnow()
+   120	        await db.commit()
+   121	    return {"id": endpoint.id, "disabled_at": endpoint.disabled_at}
+   122	
+   123	
+   124	@router.get("/deliveries")
+   125	async def list_deliveries(
+   126	    endpoint_id: str | None = Query(None),
+   127	    limit: int | None = Query(None, ge=1, le=200),
+   128	    cursor: str | None = Query(None),
+   129	    db: AsyncSession = Depends(get_db),
+   130	    tenant: Tenant = Depends(get_current_tenant),
+   131	):
+   132	    """Inspect webhook deliveries for this tenant.
+   133	
+   134	    Backward-compatible: no limit + no cursor → legacy top-50 bare array.
+   135	    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+   136	    """
+   137	    base = select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant.id)
+   138	    if endpoint_id:
+   139	        base = base.where(WebhookDelivery.endpoint_id == endpoint_id)
+   140	
+   141	    if limit is None and cursor is None:
+   142	        stmt = base.order_by(
+   143	            desc(WebhookDelivery.created_at), desc(WebhookDelivery.id)
+   144	        ).limit(50)
+   145	        result = await db.execute(stmt)
+   146	        return [_serialize_delivery(d) for d in result.scalars()]
+   147	
+   148	    page = await paginate_stmt(
+   149	        db, base, WebhookDelivery, limit=limit or 50, cursor=cursor
+   150	    )
+   151	    return {
+   152	        "data": [_serialize_delivery(d) for d in page.items],
+   153	        "has_more": page.has_more,
+   154	        "next_cursor": page.next_cursor,
+   155	    }
+     1	"""Webhook delivery — HMAC-signed POSTs to customer URLs on approval decisions.
+     2	
+     3	Flow:
+     4	  1. Customer registers an endpoint via POST /v1/webhooks with a URL.
+     5	     We mint a random secret and return it ONCE.
+     6	  2. When an approval is decided (approved/rejected), we look up matching
+     7	     endpoints for that tenant and fire a POST.
+     8	  3. The POST body is JSON: {event, action_id, decision, decided_by, ...}
+     9	  4. We sign the body with HMAC-SHA256(secret, raw_body) and put the
+    10	     signature in the `X-Sentinel-Signature` header. Customer can verify.
+    11	  5. We log every attempt in webhook_deliveries (status_code, response_snippet).
+    12	  6. Best-effort with 3 retries on 5xx/timeout, exponential backoff
+    13	     (1s, 4s, 16s). Never blocks the decision endpoint.
+    14	"""
+    15	from __future__ import annotations
+    16	
+    17	import asyncio
+    18	import hashlib
+    19	import hmac
+    20	import json
+    21	import logging
+    22	import secrets
+    23	from datetime import datetime
+    24	from typing import Any
+    25	
+    26	import httpx
+    27	from sqlalchemy import select
+    28	from sqlalchemy.ext.asyncio import AsyncSession
+    29	
+    30	from app.models import Approval, WebhookDelivery, WebhookEndpoint
+    31	
+    32	log = logging.getLogger(__name__)
+    33	
+    34	MAX_ATTEMPTS = 3
+    35	BACKOFF_SECONDS = [1.0, 4.0, 16.0]
+    36	HTTP_TIMEOUT = 8.0
+    37	SIGNATURE_HEADER = "X-Sentinel-Signature"
+    38	EVENT_HEADER = "X-Sentinel-Event"
+    39	ID_HEADER = "X-Sentinel-Delivery"
+    40	
+    41	# The event loop only keeps weak references to tasks; without a strong
+    42	# reference here, an in-flight delivery (and its retries) can be GC'd.
+    43	_inflight: set[asyncio.Task] = set()
+    44	
+    45	
+    46	def _track(task: asyncio.Task) -> None:
+    47	    _inflight.add(task)
+    48	    task.add_done_callback(_on_delivery_done)
+    49	
+    50	
+    51	def _on_delivery_done(task: asyncio.Task) -> None:
+    52	    _inflight.discard(task)
+    53	    if not task.cancelled() and (exc := task.exception()) is not None:
+    54	        log.error("webhook delivery task crashed: %s", exc, exc_info=exc)
+    55	
+    56	
+    57	def generate_secret() -> str:
+    58	    """64-char URL-safe random secret. Shown ONCE on creation."""
+    59	    return f"whsec_{secrets.token_urlsafe(32)}"
+    60	
+    61	
+    62	def sign_body(secret: str, raw_body: bytes) -> str:
+    63	    """HMAC-SHA256 hex digest of the raw POST body, signed with the endpoint secret.
+    64	
+    65	    Customer verifies via:
+    66	        expected = hmac.new(secret.encode(), raw_body, sha256).hexdigest()
+    67	        if not hmac.compare_digest(expected, request.headers["X-Sentinel-Signature"]):
+    68	            return 401
+    69	    """
+    70	    return hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    71	
+    72	
+    73	def _event_type_for(approval: Approval) -> str | None:
+    74	    if approval.decision == "approved":
+    75	        return "approval.approved"
+    76	    if approval.decision == "rejected":
+    77	        return "approval.rejected"
+    78	    return None
+    79	
+    80	
+    81	def _matches_filter(endpoint: WebhookEndpoint, event_type: str) -> bool:
+    82	    """Endpoint subscribes to event if filter is empty or contains the event."""
+    83	    f = endpoint.event_filter or []
+    84	    if not f:
+    85	        return True
+    86	    return event_type in f
+    87	
+    88	
+    89	def _build_payload(event_type: str, approval: Approval, delivery_id: str) -> dict[str, Any]:
+    90	    return {
+    91	        "id": delivery_id,
+    92	        "event": event_type,
+    93	        "created_at": datetime.utcnow().isoformat() + "Z",
+    94	        "action_id": approval.id,
+    95	        "tenant_id": approval.tenant_id,
+    96	        "function_name": approval.function_name,
+    97	        "arguments": approval.arguments,
+    98	        "risk_level": approval.risk_level,
+    99	        "decision": approval.decision,
+   100	        "decided_by": approval.decided_by,
+   101	        "decided_at": approval.decided_at.isoformat() + "Z" if approval.decided_at else None,
+   102	        "reason": approval.reason,
+   103	    }
+   104	
+   105	
+   106	async def dispatch_approval_webhook(
+   107	    db: AsyncSession, approval: Approval
+   108	) -> None:
+   109	    """Look up all webhook endpoints for this tenant subscribed to the event,
+   110	    fire each one as a background task (best-effort with retries)."""
+   111	    event_type = _event_type_for(approval)
+   112	    if event_type is None:
+   113	        return
+   114	
+   115	    result = await db.execute(
+   116	        select(WebhookEndpoint).where(
+   117	            WebhookEndpoint.tenant_id == approval.tenant_id,
+   118	            WebhookEndpoint.disabled_at.is_(None),
+   119	        )
+   120	    )
+   121	    endpoints = [e for e in result.scalars() if _matches_filter(e, event_type)]
+   122	    if not endpoints:
+   123	        return
+   124	
+   125	    for endpoint in endpoints:
+   126	        # Spawn each delivery as its own task — never block the caller.
+   127	        _track(asyncio.create_task(_deliver_with_retries(endpoint, event_type, approval)))
+   128	
+   129	
+   130	async def _deliver_with_retries(
+   131	    endpoint: WebhookEndpoint, event_type: str, approval: Approval
+   132	) -> None:
+   133	    """Run in a background task. Owns its own DB session to avoid lifecycle issues."""
+   134	    from app.db import SessionLocal
+   135	
+   136	    delivery_id = f"whd_{secrets.token_hex(8)}"
+   137	    payload = _build_payload(event_type, approval, delivery_id)
+   138	    raw_body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+   139	    signature = sign_body(endpoint.secret, raw_body)
+   140	    headers = {
+   141	        "Content-Type": "application/json",
+   142	        "User-Agent": "Sentinel-Webhook/1.0",
+   143	        SIGNATURE_HEADER: signature,
+   144	        EVENT_HEADER: event_type,
+   145	        ID_HEADER: delivery_id,
+   146	    }
+   147	
+   148	    last_status: int | None = None
+   149	    last_snippet: str | None = None
+   150	    success = False
+   151	
+   152	    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+   153	        for attempt in range(1, MAX_ATTEMPTS + 1):
+   154	            try:
+   155	                r = await client.post(endpoint.url, content=raw_body, headers=headers)
+   156	                last_status = r.status_code
+   157	                last_snippet = (r.text or "")[:512]
+   158	                if 200 <= r.status_code < 300:
+   159	                    success = True
+   160	                    break
+   161	                # 4xx (except 408/429) — don't retry, the customer rejected us
+   162	                if 400 <= r.status_code < 500 and r.status_code not in (408, 429):
+   163	                    break
+   164	            except httpx.RequestError as e:
+   165	                last_snippet = f"{type(e).__name__}: {str(e)[:400]}"
+   166	            if attempt < MAX_ATTEMPTS:
+   167	                await asyncio.sleep(BACKOFF_SECONDS[attempt - 1])
+   168	
+   169	    # Record delivery + bump endpoint last-used/status
+   170	    try:
+   171	        async with SessionLocal() as db2:
+   172	            db2.add(
+   173	                WebhookDelivery(
+   174	                    id=delivery_id,
+   175	                    endpoint_id=endpoint.id,
+   176	                    tenant_id=endpoint.tenant_id,
+   177	                    event_type=event_type,
+   178	                    action_id=approval.id,
+   179	                    payload=payload,
+   180	                    attempt=attempt,
+   181	                    status_code=last_status,
+   182	                    response_snippet=last_snippet,
+   183	                    delivered_at=datetime.utcnow() if success else None,
+   184	                )
+   185	            )
+   186	            ep = await db2.get(WebhookEndpoint, endpoint.id)
+   187	            if ep is not None:
+   188	                ep.last_used_at = datetime.utcnow()
+   189	                ep.last_status_code = last_status
+   190	            await db2.commit()
+   191	    except Exception:
+   192	        log.exception("Failed to record webhook delivery for endpoint %s", endpoint.id)
+     1	"""Onboarding emails — welcome, verify, recover.
+     2	
+     3	Uses the same HMAC-signed token primitive as approval magic links
+     4	(see approval_tokens.py) so we share the same JWT_SECRET infra.
+     5	"""
+     6	from __future__ import annotations
+     7	
+     8	import base64
+     9	import hashlib
+    10	import hmac
+    11	import json
+    12	import logging
+    13	import time
+    14	
+    15	import httpx
+    16	
+    17	from app.config import settings
+    18	
+    19	log = logging.getLogger(__name__)
+    20	
+    21	
+    22	# ── HMAC token (purpose-scoped) ──────────────────────────────────────
+    23	def _sign(payload_part: str) -> str:
+    24	    digest = hmac.new(
+    25	        settings.JWT_SECRET.encode(),
+    26	        payload_part.encode(),
+    27	        hashlib.sha256,
+    28	    ).digest()
+    29	    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    30	
+    31	
+    32	def _b64e(b: bytes) -> str:
+    33	    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+    34	
+    35	
+    36	def _b64d(s: str) -> bytes:
+    37	    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    38	
+    39	
+    40	class InvalidOnboardingToken(ValueError):
+    41	    pass
+    42	
+    43	
+    44	def create_token(purpose: str, subject: str, ttl_seconds: int) -> str:
+    45	    """Signed token: base64(json({purpose, sub, exp})) + '.' + sig."""
+    46	    payload = {
+    47	        "p": purpose,           # "verify" | "recover"
+    48	        "sub": subject,         # tenant.id
+    49	        "exp": int(time.time()) + int(ttl_seconds),
+    50	    }
+    51	    payload_part = _b64e(
+    52	        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    53	    )
+    54	    return f"{payload_part}.{_sign(payload_part)}"
+    55	
+    56	
+    57	def verify_token(token: str, expected_purpose: str) -> str:
+    58	    """Return subject (tenant_id) if the token is valid for `expected_purpose`."""
+    59	    try:
+    60	        payload_part, signature_part = token.split(".", 1)
+    61	    except ValueError as e:
+    62	        raise InvalidOnboardingToken("Malformed token") from e
+    63	    if not hmac.compare_digest(_sign(payload_part), signature_part):
+    64	        raise InvalidOnboardingToken("Invalid signature")
+    65	    try:
+    66	        payload = json.loads(_b64d(payload_part))
+    67	    except (ValueError, TypeError) as e:
+    68	        raise InvalidOnboardingToken("Malformed payload") from e
+    69	    if payload.get("p") != expected_purpose:
+    70	        raise InvalidOnboardingToken("Wrong purpose")
+    71	    if int(payload.get("exp", 0)) < int(time.time()):
+    72	        raise InvalidOnboardingToken("Expired")
+    73	    sub = payload.get("sub")
+    74	    if not sub or not isinstance(sub, str):
+    75	        raise InvalidOnboardingToken("Missing subject")
+    76	    return sub
+    77	
+    78	
+    79	# ── URL builders ─────────────────────────────────────────────────────
+    80	def _dashboard_origin() -> str:
+    81	    return (settings.PUBLIC_APP_URL or "https://app.pauseapi.app").rstrip("/")
+    82	
+    83	
+    84	def verify_url(token: str) -> str:
+    85	    return f"{_dashboard_origin()}/verify?t={token}"
+    86	
+    87	
+    88	def recover_url(token: str) -> str:
+    89	    return f"{_dashboard_origin()}/recover?t={token}"
+    90	
+    91	
+    92	# ── Resend send wrapper ──────────────────────────────────────────────
+    93	async def _send(to: str, subject: str, html: str) -> None:
+    94	    api_key = settings.RESEND_API_KEY
+    95	    if not api_key:
+    96	        log.warning("RESEND_API_KEY not set — skipping onboarding email to %s", to)
+    97	        return
+    98	    try:
+    99	        async with httpx.AsyncClient(timeout=10.0) as client:
+   100	            r = await client.post(
+   101	                "https://api.resend.com/emails",
+   102	                headers={"Authorization": [REDACTED]"Bearer {api_key}"},
+   103	                json={
+   104	                    "from": settings.EMAIL_FROM or "Sentinel <approvals@pauseapi.app>",
+   105	                    "reply_to": settings.EMAIL_REPLY_TO or "support@regengine.co",
+   106	                    "to": [to],
+   107	                    "subject": subject,
+   108	                    "html": html,
+   109	                },
+   110	            )
+   111	            if r.status_code >= 400:
+   112	                log.warning("Resend onboarding send failed: %s %s", r.status_code, r.text[:200])
+   113	    except Exception as e:
+   114	        # best-effort — never crash the signup
+   115	        log.exception("Onboarding email send error: %s", e)
+   116	
+   117	
+   118	# ── Welcome + verify ─────────────────────────────────────────────────
+   119	async def send_welcome_email(tenant, api_key: str) -> None:
+   120	    """Single email containing: API key reminder + verify link + demo snippet."""
+   121	    token = create_token("verify", tenant.id, ttl_seconds=60 * 60 * 24 * 7)  # 7 days
+   122	    link = verify_url(token)
+   123	    key_preview = f"{api_key[:14]}…{api_key[-6:]}"
+   124	
+   125	    snippet = f"""from sentinel import configure, oversight
+   126	
+   127	configure(api_key=\"{api_key}\")
+   128	
+   129	@oversight(risk_level=\"high\", approvers=[\"{tenant.email}\"])
+   130	def wire_transfer(amount, recipient):
+   131	    return {{\"ok\": True}}
+   132	
+   133	wire_transfer(50_000, \"acct_xyz\")"""
+   134	
+   135	    html = f"""
+   136	    <h2>Welcome to Sentinel</h2>
+   137	    <p>Hi {tenant.name},</p>
+   138	    <p>Your workspace is live. Your API key was issued during signup
+   139	       (preview: <code>{key_preview}</code>) — keep it safe; we don't store
+   140	       it in plaintext on our end.</p>
+   141	
+   142	    <h3>Verify your email</h3>
+   143	    <p>Click below within 7 days to mark your email verified. This unlocks
+   144	       branded sender domains and access to paid plans.</p>
+   145	    <p>
+   146	      <a href="{link}"
+   147	         style="display:inline-block;background:#0a0a0a;color:#fff;
+   148	                padding:10px 16px;border-radius:6px;text-decoration:none;
+   149	                font-family:system-ui,sans-serif;font-weight:600;">
+   150	        Verify email →
+   151	      </a>
+   152	    </p>
+   153	
+   154	    <h3>2-minute test</h3>
+   155	    <pre style="background:#f5f5f5;padding:12px;border-radius:6px;
+   156	                font-family:Menlo,Consolas,monospace;font-size:13px;
+   157	                overflow-x:auto;line-height:1.5;">{snippet}</pre>
+   158	
+   159	    <p>
+   160	      <a href="https://github.com/PetrefiedThunder/sentinel-examples">Examples repo</a>
+   161	      &middot;
+   162	      <a href="https://github.com/PetrefiedThunder/sentinel-sdk#readme">SDK docs</a>
+   163	      &middot;
+   164	      <a href="https://app.pauseapi.app">Dashboard</a>
+   165	    </p>
+   166	
+   167	    <p style="color:#888;font-size:12px;margin-top:24px;">
+   168	      — RegEngine, Inc. &middot;
+   169	      <a href="https://pauseapi.app/privacy">Privacy</a> &middot;
+   170	      <a href="https://pauseapi.app/terms">Terms</a>
+   171	    </p>
+   172	    """
+   173	    await _send(tenant.email, "Welcome to Sentinel — verify your email", html)
+   174	
+   175	
+   176	# ── Recovery email (rotate API key) ──────────────────────────────────
+   177	async def send_recovery_email(tenant) -> None:
+   178	    token = create_token("recover", tenant.id, ttl_seconds=60 * 30)  # 30 min
+   179	    link = recover_url(token)
+   180	    html = f"""
+   181	    <h2>Rotate your Sentinel API key</h2>
+   182	    <p>Someone (hopefully you) asked us to issue a fresh API key for the
+   183	       Sentinel workspace registered to this email.</p>
+   184	    <p>
+   185	      <a href="{link}"
+   186	         style="display:inline-block;background:#0a0a0a;color:#fff;
+   187	                padding:10px 16px;border-radius:6px;text-decoration:none;
+   188	                font-family:system-ui,sans-serif;font-weight:600;">
+   189	        Issue new API key →
+   190	      </a>
+   191	    </p>
+   192	    <p>Clicking the link will <b>revoke any existing API keys</b> on this
+   193	       workspace and show you a new one. The link expires in 30 minutes.</p>
+   194	    <p>If this wasn't you, ignore this email and nothing changes.</p>
+   195	    <p style="color:#888;font-size:12px;margin-top:24px;">
+   196	      — RegEngine, Inc.
+   197	    </p>
+   198	    """
+   199	    await _send(tenant.email, "Recover your Sentinel API key", html)

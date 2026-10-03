@@ -1,0 +1,7 @@
+app/logging_setup.py:53: error: Argument "processors" to "configure" has incompatible type "list[object]"; expected "Iterable[Callable[[Any, str, MutableMapping[str, Any]], Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...]]] | None"  [arg-type]
+app/logging_setup.py:64: error: Argument "foreign_pre_chain" to "ProcessorFormatter" has incompatible type "list[object]"; expected "Sequence[Callable[[Any, str, MutableMapping[str, Any]], Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...]]] | None"  [arg-type]
+app/services/notifications.py:40: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
+app/services/notifications.py:86: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
+app/routers/admin.py:99: error: "Result[*tuple[Any, ...]]" has no attribute "rowcount"  [attr-defined]
+app/routers/admin.py:101: error: "Result[*tuple[Any, ...]]" has no attribute "rowcount"  [attr-defined]
+app/routers/admin.py:103: error: "Result[*tuple[Any, ...]]" has no attribute "rowcount"  [attr-defined]

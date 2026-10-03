@@ -1,0 +1,681 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    DATABASE_URL: str = "postgresql+asyncpg://[REDACTED]@localhost:5432/sentinel"
+    # Optional Postgres read replica. When empty (default), read-only endpoints
+    # fall back to the primary engine — behaviour is identical to having no
+    # replica. When set, read sessions target this URL. See
+    # docs/runbooks/postgres-read-replica.md for provisioning.
+    READ_REPLICA_URL: str = ""
+    REDIS_URL: str = "redis://localhost:6379/0"
+    JWT_SECRET: str = "change-me"
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_FROM_NUMBER: str = ""
+    TWILIO_MESSAGING_SERVICE_SID: str = ""
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = ""
+    EMAIL_REPLY_TO: str = ""
+    PUBLIC_APP_URL: str = "https://app.pauseapi.app"
+    PUBLIC_API_URL: str = "https://api.pauseapi.app"
+    # Comma-separated list of approver strings (email or sms:+1...). Used when the
+    # caller's `approvers` list is empty — so the system always has a fallback recipient.
+    DEFAULT_APPROVERS: str = ""
+
+    ADMIN_TOKEN: str = ""
+
+    # Staleness threshold for an in-progress idempotency claim. New writes
+    # atomically commit the claim, handler effects, and stored response, so a
+    # crash rolls them all back. A committed _IN_PROGRESS row can only have an
+    # indeterminate/legacy outcome; once older than this threshold it fails
+    # closed with 409 instead of re-running a potentially completed write. Keep
+    # this comfortably above the longest expected handler and brief poll window.
+    IDEMPOTENCY_INPROGRESS_TTL_SECONDS: int = 30
+
+    # Stripe billing — keys come from Stripe dashboard. If empty, billing
+    # endpoints return 503 (feature disabled).
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_PRO: str = ""  # price_... id of the Pro monthly plan
+    STRIPE_SUCCESS_URL: str = "https://app.pauseapi.app/billing?status=success"
+    STRIPE_CANCEL_URL: str = "https://app.pauseapi.app/billing?status=cancelled"
+
+    # RFC 3161 Time Stamping Authority endpoint (e.g. https://freetsa.org/tsr).
+    # Empty (default) disables audit-event timestamping entirely.
+    TSA_URL: str = ""
+
+    SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = "production"
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.05
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def default_approvers_list(self) -> list[str]:
+        return [a.strip() for a in self.DEFAULT_APPROVERS.split(",") if a.strip()]
+
+
+settings = Settings()
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+from app.config import settings
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def _normalize_async_url(url: str) -> str:
+    """Coerce a plain Postgres URL to the asyncpg driver SQLAlchemy needs."""
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://") :]
+    return url
+
+
+_db_url = _normalize_async_url(settings.DATABASE_URL)
+
+engine = create_async_engine(_db_url, pool_pre_ping=True)
+SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+# Optional read replica. If READ_REPLICA_URL is set we build a second engine +
+# sessionmaker pointed at the replica; otherwise reads reuse the primary engine
+# so behaviour is identical to having no replica configured.
+if settings.READ_REPLICA_URL:
+    read_engine = create_async_engine(
+        _normalize_async_url(settings.READ_REPLICA_URL), pool_pre_ping=True
+    )
+    ReadSessionLocal = async_sessionmaker(read_engine, class_=AsyncSession, expire_on_commit=False)
+else:
+    read_engine = engine
+    ReadSessionLocal = SessionLocal
+
+
+async def get_db():
+    async with SessionLocal() as session:
+        yield session
+
+
+async def get_read_session():
+    """Session for read-only endpoints.
+
+    Targets the read replica when READ_REPLICA_URL is set, otherwise falls back
+    to the primary engine. Note replication lag: do not use for read-after-write
+    flows that must see their own just-committed data — use get_db for those.
+    """
+    async with ReadSessionLocal() as session:
+        yield session
+"""Coverage for app/services/onboarding.py — token round-trip + email builders."""
+from types import SimpleNamespace
+
+import pytest
+
+import app.services.onboarding as onboarding
+from app.config import settings
+
+
+def test_token_round_trip_verify():
+    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
+    assert onboarding.verify_token(token, expected_purpose="verify") == "ten_abc"
+
+
+def test_verify_token_malformed():
+    with pytest.raises(onboarding.InvalidOnboardingToken):
+        onboarding.verify_token("nodot", expected_purpose="verify")
+
+
+def test_verify_token_bad_signature():
+    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
+    part, _sig = token.split(".", 1)
+    with pytest.raises(onboarding.InvalidOnboardingToken):
+        onboarding.verify_token(f"{part}.tampered", expected_purpose="verify")
+
+
+def test_verify_token_wrong_purpose():
+    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
+    with pytest.raises(onboarding.InvalidOnboardingToken):
+        onboarding.verify_token(token, expected_purpose="recover")
+
+
+def test_verify_token_expired():
+    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=-1)
+    with pytest.raises(onboarding.InvalidOnboardingToken):
+        onboarding.verify_token(token, expected_purpose="verify")
+
+
+def test_url_builders():
+    assert onboarding.verify_url("tok").endswith("/verify?t=tok")
+    assert onboarding.recover_url("tok").endswith("/recover?t=tok")
+    assert onboarding._dashboard_origin().startswith("http")
+
+
+def test_send_skips_without_resend_key(monkeypatch):
+    """_send is a no-op (no httpx call) when RESEND_API_KEY is unset."""
+    import asyncio
+
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "")
+    # No network: should return quietly even with a bogus client patched in
+    asyncio.run(onboarding._send("to@x.io", "subj", "<p>hi</p>"))
+
+
+def test_send_welcome_email_invokes_send(monkeypatch):
+    import asyncio
+
+    captured = {}
+
+    async def fake_send(to, subject, html):
+        captured["to"] = to
+        captured["subject"] = subject
+        captured["html"] = html
+
+    monkeypatch.setattr(onboarding, "_send", fake_send)
+    tenant = SimpleNamespace(id="ten_abc", name="Chris", email="chris@acme.io")
+    asyncio.run(onboarding.send_welcome_email(tenant, "[REDACTED]"))
+    assert captured["to"] == "chris@acme.io"
+    assert "verify" in captured["subject"].lower()
+    assert "Verify email" in captured["html"]
+
+
+def test_send_recovery_email_invokes_send(monkeypatch):
+    import asyncio
+
+    captured = {}
+
+    async def fake_send(to, subject, html):
+        captured["to"] = to
+        captured["subject"] = subject
+
+    monkeypatch.setattr(onboarding, "_send", fake_send)
+    tenant = SimpleNamespace(id="ten_abc", name="Chris", email="chris@acme.io")
+    asyncio.run(onboarding.send_recovery_email(tenant))
+    assert captured["to"] == "chris@acme.io"
+    assert "recover" in captured["subject"].lower()
+
+
+def test_send_makes_http_call_with_key(monkeypatch):
+    """When RESEND_API_KEY is set, _send POSTs to Resend (mocked httpx)."""
+    import asyncio
+
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test")
+    posted = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            posted["url"] = url
+            posted["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(onboarding.httpx, "AsyncClient", FakeClient)
+    asyncio.run(onboarding._send("to@x.io", "subj", "<p>hi</p>"))
+    assert posted["url"] == "https://api.resend.com/emails"
+    assert posted["json"]["to"] == ["to@x.io"]
+"""Consumer contract: agent-middleware-api (PetrefiedThunder/agent-middleware-api).
+
+agent-middleware-api's human-approval gate and permit-request flow call this
+API (see its `app/services/human_approval.py` and `docs/human-approval-gate.md`)
+and depend on the exact semantics pinned here. A change that fails one of
+these tests is a BREAKING CHANGE for that consumer even though no code is
+shared — coordinate before shipping it.
+
+Pinned semantics:
+
+1. `POST /v1/approvals` dedups on (tenant, `Idempotency-Key`): replaying the
+   same key + body returns the original approval verbatim without re-running
+   the handler (the middleware retries lost responses under a deterministic
+   key and must get the same approval back, not a second human page).
+2. Same key + different body -> 409 (the middleware treats this as fail-closed
+   proof that a retry was tampered with).
+3. Approvals have NO server-side expiry: a timed-out approval stays "pending"
+   forever. The middleware enforces expiry locally from `timeout_seconds` and
+   assumes this API never flips state on its own.
+4. `timeout_seconds` accepts exactly 1..86400.
+5. `GET /v1/approvals/{id}/wait` accepts `timeout` of exactly 1..300 seconds
+   and returns the still-pending approval on timeout (not an error).
+
+Deeper coverage of the idempotency machinery itself lives in
+tests/test_idempotency_replay.py, test_idempotency_race.py, and
+test_idempotency_ttl.py; this file is intentionally the thin, named contract.
+"""
+
+import datetime as dt
+
+import pytest
+from sqlalchemy import func, select, update
+from test_support import TENANT_ID, client_for, make_sqlite_session, run
+
+from app.models import Approval
+
+PAYLOAD = {
+    "function_name": "governed_invoke",
+    "arguments": {"tool": "send_wire", "request_hash": "sha256:abc123"},
+    "risk_level": "high",
+    "approvers": ["mailto:approver@example.com"],
+    "timeout_seconds": 300,
+}
+
+
+@pytest.fixture
+def no_notifications(monkeypatch):
+    """Silence + count notification dispatches (replays must not re-notify)."""
+    calls: list = []
+
+    async def _count(approval, tenant, db=None):
+        calls.append(approval.id)
+
+    monkeypatch.setattr("app.services.approval_service.dispatch_approval_notifications", _count)
+    return calls
+
+
+def _count_approvals(session) -> int:
+    return run(
+        session.scalar(
+            select(func.count()).select_from(Approval).where(Approval.tenant_id == TENANT_ID)
+        )
+    )
+
+
+def test_replay_same_key_returns_original_approval(no_notifications):
+    """Contract #1: middleware retry under the same deterministic key must get
+    the original approval back — same id, one row, one human notification."""
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            first = client.post(
+                "/v1/approvals", json=PAYLOAD, headers={"Idempotency-Key": "mw-invoke-1"}
+            )
+            replay = client.post(
+                "/v1/approvals", json=PAYLOAD, headers={"Idempotency-Key": "mw-invoke-1"}
+            )
+        assert first.status_code == 200
+        assert replay.json() == first.json()
+        assert _count_approvals(session) == 1
+        assert len(no_notifications) == 1
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_changed_body_under_same_key_conflicts(no_notifications):
+    """Contract #2: a mutated request under an accepted key fails closed (409)."""
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        mutated = {**PAYLOAD, "arguments": {"tool": "send_wire", "request_hash": "sha256:EVIL"}}
+        with client_for(session, tenant) as client:
+            first = client.post(
+                "/v1/approvals", json=PAYLOAD, headers={"Idempotency-Key": "mw-invoke-2"}
+            )
+            conflict = client.post(
+                "/v1/approvals", json=mutated, headers={"Idempotency-Key": "mw-invoke-2"}
+            )
+        assert first.status_code == 200
+        assert conflict.status_code == 409
+        assert _count_approvals(session) == 1
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_timed_out_approval_stays_pending_server_side(no_notifications):
+    """Contract #3: no server-side expiry. Long after timeout_seconds has
+    elapsed, the approval still reads "pending" — the middleware owns expiry."""
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            created = client.post(
+                "/v1/approvals",
+                json={**PAYLOAD, "timeout_seconds": 1},
+                headers={"Idempotency-Key": "mw-invoke-3"},
+            )
+            action_id = created.json()["action_id"]
+
+            # Backdate creation two days — far beyond timeout_seconds=1.
+            run(
+                session.execute(
+                    update(Approval)
+                    .where(Approval.id == action_id)
+                    .values(created_at=dt.datetime.utcnow() - dt.timedelta(days=2))
+                )
+            )
+            run(session.commit())
+
+            fetched = client.get(f"/v1/approvals/{action_id}")
+            assert fetched.status_code == 200
+            assert fetched.json()["decision"] == "pending"
+            assert fetched.json()["status"] == "pending"
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_timeout_seconds_bounds_are_1_to_86400(no_notifications):
+    """Contract #4: the middleware clamps to these exact bounds before sending."""
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            for bad in (0, 86401):
+                r = client.post("/v1/approvals", json={**PAYLOAD, "timeout_seconds": bad})
+                assert r.status_code == 422, f"timeout_seconds={bad} should be rejected"
+            for good in (1, 86400):
+                r = client.post("/v1/approvals", json={**PAYLOAD, "timeout_seconds": good})
+                assert r.status_code == 200, f"timeout_seconds={good} should be accepted"
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_wait_timeout_bounds_and_pending_timeout_shape(no_notifications):
+    """Contract #5: /wait accepts timeout 1..300; on timeout it returns the
+    still-pending approval body (200), never an error the middleware would
+    misread as Sentinel being down."""
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            created = client.post(
+                "/v1/approvals", json=PAYLOAD, headers={"Idempotency-Key": "mw-invoke-4"}
+            )
+            action_id = created.json()["action_id"]
+
+            for bad in (0, 301):
+                r = client.get(f"/v1/approvals/{action_id}/wait", params={"timeout": bad})
+                assert r.status_code == 422, f"wait timeout={bad} should be rejected"
+
+            waited = client.get(f"/v1/approvals/{action_id}/wait", params={"timeout": 1})
+            assert waited.status_code == 200
+            assert waited.json()["decision"] == "pending"
+    finally:
+        run(session.close())
+        run(engine.dispose())
+import hashlib
+import json
+
+from sqlalchemy import desc, select, text
+
+from app.models import AuditEvent
+
+
+def _compute_hash(prev_hash, payload):
+    serialized = json.dumps(payload, sort_keys=True, default=str)
+    data = (prev_hash or "") + serialized
+    return hashlib.sha256(data.encode()).hexdigest()
+
+
+async def append_audit_event(
+    db, tenant_id, action_id, execution_result, error=None, *, commit=True
+):
+    # Serialize concurrent appends per tenant. Without this, two simultaneous
+    # appends both read the same "previous" event and fork the chain — found
+    # in production by GET /v1/audit-events/verify on 2026-06-10 (two forks
+    # left by the 5-way-concurrent approval test). The Postgres advisory lock
+    # is held until the surrounding transaction commits; sqlite (tests) is
+    # single-writer so the lock is unnecessary there.
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:tid))"),
+            {"tid": tenant_id},
+        )
+
+    result = await db.execute(
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == tenant_id)
+        # id tiebreak matters: verify walks (created_at asc, id asc), so the
+        # chain head must be the max of that same ordering.
+        .order_by(desc(AuditEvent.created_at), desc(AuditEvent.id))
+        .limit(1)
+    )
+    prev = result.scalar_one_or_none()
+    prev_hash = prev.event_hash if prev else None
+
+    payload = {
+        "action_id": action_id,
+        "execution_result": execution_result,
+        "error": error,
+    }
+    event_hash = _compute_hash(prev_hash, payload)
+
+    event = AuditEvent(
+        tenant_id=tenant_id,
+        action_id=action_id,
+        execution_result=execution_result,
+        error=error,
+        prev_hash=prev_hash,
+        event_hash=event_hash,
+    )
+    db.add(event)
+    if commit:
+        await db.commit()
+        await db.refresh(event)
+    else:
+        # Decision routes own the transaction containing their audit evidence.
+        await db.flush()
+    return event
+import csv
+import io
+import json
+from datetime import UTC, datetime
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import get_current_tenant
+from app.db import get_db
+from app.models import Approval, AuditEvent, Tenant
+from app.schemas import AuditEventCreate
+
+# _compute_hash is the canonical hash used when events are appended
+# (see app/services/audit_log.py) — verification must replicate it exactly.
+from app.services.audit_log import _compute_hash, append_audit_event
+from app.services.pagination import paginate_stmt
+from app.services.tsa import TSAError, timestamp_audit_event
+
+router = APIRouter()
+logger = structlog.get_logger(__name__)
+
+
+def _serialize(e: AuditEvent) -> dict:
+    return {
+        "id": e.id,
+        "action_id": e.action_id,
+        "execution_result": e.execution_result,
+        "error": e.error,
+        "prev_hash": e.prev_hash,
+        "event_hash": e.event_hash,
+        "tsa_timestamp": e.tsa_timestamp,
+        "created_at": e.created_at,
+    }
+
+
+@router.post("")
+async def emit(
+    payload: AuditEventCreate,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    # Verify the action belongs to this tenant before recording an event for it
+    approval = await db.get(Approval, payload.action_id)
+    if not approval or approval.tenant_id != tenant.id:
+        raise HTTPException(404, "Not found")
+    event = await append_audit_event(
+        db, tenant.id, payload.action_id, payload.execution_result, payload.error
+    )
+    # Best-effort RFC 3161 timestamping: a no-op unless TSA_URL is configured,
+    # and a TSA outage must never fail the audit write itself.
+    try:
+        await timestamp_audit_event(db, event)
+    except TSAError:
+        logger.warning("tsa_timestamp_failed", event_id=event.id, exc_info=True)
+    return _serialize(event)
+
+
+@router.get("")
+async def list_events(
+    action_id: str | None = Query(None, description="Filter to a single action_id"),
+    limit: int | None = Query(None, ge=1, le=500),
+    cursor: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """List audit events.
+
+    Backward-compatible: no limit + no cursor → legacy top-100 bare array.
+    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+    """
+    base = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    if action_id:
+        base = base.where(AuditEvent.action_id == action_id)
+
+    if limit is None and cursor is None:
+        stmt = base.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(100)
+        result = await db.execute(stmt)
+        return [_serialize(e) for e in result.scalars().all()]
+
+    page = await paginate_stmt(db, base, AuditEvent, limit=limit or 100, cursor=cursor)
+    return {
+        "data": [_serialize(e) for e in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }
+
+
+@router.get("/verify")
+async def verify_chain(
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Walk the tenant's full audit hash chain and prove tamper-evidence.
+
+    Recomputes each event's hash from its stored payload (same computation as
+    app/services/audit_log.py) and checks the prev_hash linkage. Read-only.
+    """
+    stmt = (
+        select(AuditEvent)
+        .where(AuditEvent.tenant_id == tenant.id)
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+    )
+    result = await db.execute(stmt)
+    events = result.scalars().all()
+
+    valid = True
+    first_invalid_event_id = None
+    prev_event_hash = None
+
+    for e in events:
+        # Same payload shape append_audit_event hashes at write time.
+        payload = {
+            "action_id": e.action_id,
+            "execution_result": e.execution_result,
+            "error": e.error,
+        }
+        expected_hash = _compute_hash(e.prev_hash, payload)
+        if e.event_hash != expected_hash or e.prev_hash != prev_event_hash:
+            valid = False
+            first_invalid_event_id = e.id
+            break
+        prev_event_hash = e.event_hash
+
+    return {
+        "valid": valid,
+        "events_checked": len(events),
+        "first_invalid_event_id": first_invalid_event_id,
+        "checked_at": datetime.now(UTC).isoformat(),
+    }
+
+
+@router.get(".csv")
+async def export_csv(
+    action_id: str | None = Query(None, description="Filter to a single action_id"),
+    limit: int = Query(10_000, ge=1, le=100_000),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Stream audit events as CSV for offline analysis / compliance reviews.
+
+    Customers ask for this constantly during procurement — they want to ingest
+    the audit log into their own SIEM. Keep the column set stable; downstream
+    parsers depend on the header row.
+    """
+    stmt = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    if action_id:
+        stmt = stmt.where(AuditEvent.action_id == action_id)
+    stmt = stmt.order_by(AuditEvent.created_at.asc()).limit(limit)
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(
+            [
+#!/usr/bin/env python3
+"""QA-only command recorder. Run from repository root; never pass credentials."""
+import argparse
+import datetime
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--group", required=True, choices=["backend", "frontend", "ux", "lead", "gate"])
+parser.add_argument("--label", required=True)
+parser.add_argument("--timeout", type=int, default=180)
+parser.add_argument("command")
+args = parser.parse_args()
+root = Path(__file__).resolve().parent
+stamp = datetime.datetime.now(datetime.timezone.utc)
+slug = re.sub(r"[^a-z0-9]+", "-", args.label.lower()).strip("-")
+name = f"{args.group}-{stamp.strftime('%H%M%S%f')}-{slug}.txt"
+artifact = root / "artifacts" / name
+
+def redact(value):
+    value = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", "[REDACTED]", value, flags=re.S)
+    value = re.sub(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?(?:bearer\s+)?)[^\s\"',}]+", r"\1[REDACTED]", value)
+    value = re.sub(r"(?:sk_live_|rk_live_|sk_test_|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]+", "[REDACTED]", value)
+    value = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/:@]+:[^\s/@]+@", r"\1[REDACTED]@", value)
+    value = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", "[REDACTED]", value)
+    return value
+
+entry = {"started_utc": stamp.isoformat(), "group": args.group, "label": args.label, "command": redact(args.command), "artifact": f"artifacts/{name}"}
+start = time.monotonic()
+# No inherited provider credentials or automatic environment-file reads.
+env = {k: v for k, v in os.environ.items() if k in {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "PW_TEST_CONNECT_WS_ENDPOINT", "VIRTUAL_ENV", "UV_CACHE_DIR"}}
+try:
+    result = subprocess.run(args.command, shell=True, executable="/bin/zsh", text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=args.timeout, env=env)
+    output, code = result.stdout, result.returncode
+except subprocess.TimeoutExpired as exc:
+    output = exc.stdout or ""
+    if isinstance(output, bytes):
+        output = output.decode(errors="replace")
+    output += "\nQA TIMEOUT\n"
+    code = 124
+entry.update(ended_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(), duration_seconds=round(time.monotonic()-start, 3), exit_code=code)
+output = redact(output)
+artifact.write_text(output)
+with (root / f"{args.group}-commands.jsonl").open("a") as stream:
+    stream.write(json.dumps(entry)+"\n")
+print(output, end="")
+print(f"\nQA_LOG: {entry['artifact']} | exit={code}")
+sys.exit(code)

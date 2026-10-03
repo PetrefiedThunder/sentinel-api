@@ -1,0 +1,83 @@
+.....................FFFFF.........FFFFF.F                               [100%]
+=================================== FAILURES ===================================
+_____ test_recovery_token_is_single_use_and_preserves_first_recovered_key ______
+tests/test_qa_backend.py:158: in test_recovery_token_is_single_use_and_preserves_first_recovered_key
+    assert replay.status_code in (400, 401, 409) and unchanged
+E   assert (200 in (400, 401, 409))
+E    +  where 200 = <Response [200 OK]>.status_code
+______________ test_onboarding_rejects_weak_signing_configuration ______________
+tests/test_qa_backend.py:166: in test_onboarding_rejects_weak_signing_configuration
+    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE RuntimeError
+_ test_webhook_registration_rejects_private_network_targets[http://127.0.0.1/hook] _
+tests/test_qa_backend.py:175: in test_webhook_registration_rejects_private_network_targets
+    assert response.status_code in (400, 422)
+E   assert 200 in (400, 422)
+E    +  where 200 = <Response [200 OK]>.status_code
+_ test_webhook_registration_rejects_private_network_targets[http://10.0.0.1/hook] _
+tests/test_qa_backend.py:175: in test_webhook_registration_rejects_private_network_targets
+    assert response.status_code in (400, 422)
+E   assert 200 in (400, 422)
+E    +  where 200 = <Response [200 OK]>.status_code
+_ test_webhook_registration_rejects_private_network_targets[http://[::1]/hook] _
+tests/test_qa_backend.py:175: in test_webhook_registration_rejects_private_network_targets
+    assert response.status_code in (400, 422)
+E   assert 200 in (400, 422)
+E    +  where 200 = <Response [200 OK]>.status_code
+_ test_unicode_token_signature_is_a_client_error[/v1/approvals/act_qa_owner/token-decision] _
+tests/test_qa_backend.py:195: in test_unicode_token_signature_is_a_client_error
+    assert response.status_code in (400, 401)
+E   assert 500 in (400, 401)
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+_ test_unicode_token_signature_is_a_client_error[/v1/tenants/recover/exchange] _
+tests/test_qa_backend.py:195: in test_unicode_token_signature_is_a_client_error
+    assert response.status_code in (400, 401)
+E   assert 500 in (400, 401)
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+___ test_unicode_token_signature_is_a_client_error[/v1/tenants/verify-email] ___
+tests/test_qa_backend.py:195: in test_unicode_token_signature_is_a_client_error
+    assert response.status_code in (400, 401)
+E   assert 500 in (400, 401)
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+_________________ test_recovered_key_keeps_test_workspace_mode _________________
+tests/test_qa_backend.py:203: in test_recovered_key_keeps_test_workspace_mode
+    assert response.json()["api_key"].startswith("sk_test_")
+E   AssertionError: assert False
+E    +  where False = <built-in method startswith of str object at 0x10e536130>('sk_test_')
+E    +    where <built-in method startswith of str object at 0x10e536130> = '[REDACTED]'.startswith
+_ test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver _
+tests/test_qa_backend.py:219: in test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver
+    assert fallback.status_code == 400
+E   assert 200 == 400
+E    +  where 200 = <Response [200 OK]>.status_code
+_____ test_unsigned_twilio_callback_cannot_change_multiple_tenants[False] ______
+tests/test_qa_backend.py:236: in test_unsigned_twilio_callback_cannot_change_multiple_tenants
+    assert response.status_code in (401, 503) and unchanged
+E   assert (200 in (401, 503))
+E    +  where 200 = <Response [200 OK]>.status_code
+=============================== warnings summary ===============================
+tests/test_qa_backend.py: 464 warnings
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.venv/lib/python3.13/site-packages/sqlalchemy/sql/schema.py:4296: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return util.wrap_callable(lambda ctx: fn(), fn)  # type: ignore[call-arg, no-any-return, no-untyped-call]  # noqa: E501
+
+tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key
+tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key
+tests/test_qa_backend.py::test_recovered_key_keeps_test_workspace_mode
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/routers/tenants.py:156: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key
+FAILED tests/test_qa_backend.py::test_onboarding_rejects_weak_signing_configuration
+FAILED tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://127.0.0.1/hook]
+FAILED tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://10.0.0.1/hook]
+FAILED tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://[::1]/hook]
+FAILED tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/approvals/act_qa_owner/token-decision]
+FAILED tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/tenants/recover/exchange]
+FAILED tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/tenants/verify-email]
+FAILED tests/test_qa_backend.py::test_recovered_key_keeps_test_workspace_mode
+FAILED tests/test_qa_backend.py::test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver
+FAILED tests/test_qa_backend.py::test_unsigned_twilio_callback_cannot_change_multiple_tenants[False]
+11 failed, 31 passed, 467 warnings in 1.16s

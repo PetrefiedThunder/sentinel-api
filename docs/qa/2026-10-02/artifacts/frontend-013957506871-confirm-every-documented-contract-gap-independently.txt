@@ -1,0 +1,72 @@
+FFFFFFFF                                                                 [100%]
+=================================== FAILURES ===================================
+______ test_openapi_types_primary_approval_responses[/v1/approvals-post] _______
+tests/test_qa_contract.py:104: in test_openapi_types_primary_approval_responses
+    assert response["content"]["application/json"]["schema"], (method, path)
+E   AssertionError: ('post', '/v1/approvals')
+E   assert {}
+_______ test_openapi_types_primary_approval_responses[/v1/approvals-get] _______
+tests/test_qa_contract.py:104: in test_openapi_types_primary_approval_responses
+    assert response["content"]["application/json"]["schema"], (method, path)
+E   AssertionError: ('get', '/v1/approvals')
+E   assert {}
+_ test_openapi_types_primary_approval_responses[/v1/approvals/{action_id}-get] _
+tests/test_qa_contract.py:104: in test_openapi_types_primary_approval_responses
+    assert response["content"]["application/json"]["schema"], (method, path)
+E   AssertionError: ('get', '/v1/approvals/{action_id}')
+E   assert {}
+_ test_openapi_types_primary_approval_responses[/v1/approvals/{action_id}/wait-get] _
+tests/test_qa_contract.py:104: in test_openapi_types_primary_approval_responses
+    assert response["content"]["application/json"]["schema"], (method, path)
+E   AssertionError: ('get', '/v1/approvals/{action_id}/wait')
+E   assert {}
+_ test_openapi_declares_runtime_request_constraints[ApprovalCreate-timeout_seconds-expected0] _
+tests/test_qa_contract.py:126: in test_openapi_declares_runtime_request_constraints
+    assert actual == expected
+E   AssertionError: assert {'minimum': N...aximum': None} == {'minimum': 1...ximum': 86400}
+E     
+E     Differing items:
+E     {'minimum': None} != {'minimum': 1}
+E     {'maximum': None} != {'maximum': 86400}
+E     Use -v to get more diff
+_ test_openapi_declares_runtime_request_constraints[ApprovalCreate-risk_level-expected1] _
+tests/test_qa_contract.py:126: in test_openapi_declares_runtime_request_constraints
+    assert actual == expected
+E   AssertionError: assert {'enum': set()} == {'enum': {'cr...w', 'medium'}}
+E     
+E     Differing items:
+E     {'enum': set()} != {'enum': {'critical', 'high', 'low', 'medium'}}
+E     Use -v to get more diff
+_ test_openapi_declares_runtime_request_constraints[TenantSignup-mode-expected2] _
+tests/test_qa_contract.py:126: in test_openapi_declares_runtime_request_constraints
+    assert actual == expected
+E   AssertionError: assert {'enum': set()} == {'enum': {'live', 'test'}}
+E     
+E     Differing items:
+E     {'enum': set()} != {'enum': {'live', 'test'}}
+E     Use -v to get more diff
+_________________ test_openapi_csv_media_type_matches_runtime __________________
+tests/test_qa_contract.py:138: in test_openapi_csv_media_type_matches_runtime
+    assert media_type in documented["content"]
+E   AssertionError: assert 'text/csv' in {'application/json': {'schema': {}}}
+----------------------------- Captured stdout call -----------------------------
+{"status_code": 200, "event": "request.completed", "level": "info", "request_id": "8fa51f349166d6e5", "method": "GET", "route": "/v1/audit-events.csv", "timestamp": "2026-10-03T01:39:58.039574Z"}
+{"event": "HTTP Request: GET http://qa.invalid/v1/audit-events.csv \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-10-03T01:39:58.040452Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: GET http://qa.invalid/v1/audit-events.csv "HTTP/1.1 200 OK"
+=============================== warnings summary ===============================
+tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.venv/lib/python3.13/site-packages/sqlalchemy/sql/schema.py:4296: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return util.wrap_callable(lambda ctx: fn(), fn)  # type: ignore[call-arg, no-any-return, no-untyped-call]  # noqa: E501
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_qa_contract.py::test_openapi_types_primary_approval_responses[/v1/approvals-post]
+FAILED tests/test_qa_contract.py::test_openapi_types_primary_approval_responses[/v1/approvals-get]
+FAILED tests/test_qa_contract.py::test_openapi_types_primary_approval_responses[/v1/approvals/{action_id}-get]
+FAILED tests/test_qa_contract.py::test_openapi_types_primary_approval_responses[/v1/approvals/{action_id}/wait-get]
+FAILED tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints[ApprovalCreate-timeout_seconds-expected0]
+FAILED tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints[ApprovalCreate-risk_level-expected1]
+FAILED tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints[TenantSignup-mode-expected2]
+FAILED tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime
+8 failed, 22 deselected, 1 warning in 0.43s

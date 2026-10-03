@@ -1,0 +1,300 @@
+import pytest
+from pydantic import ValidationError
+
+from app.schemas import ApprovalCreate
+
+
+def test_approval_create_rejects_slack_approvers():
+    with pytest.raises(ValidationError) as exc:
+        ApprovalCreate(
+            function_name="transfer_funds",
+            arguments={"amount": 1000},
+            risk_level="high",
+            approvers=["slack://channel/C123"],
+        )
+
+    message = exc.value.errors()[0]["msg"]
+    assert "Use email" in message
+    assert "sms:" in message
+    assert "slack://" not in message
+
+
+def test_approval_create_accepts_sms_and_email_approvers():
+    approval = ApprovalCreate(
+        function_name="transfer_funds",
+        arguments={"amount": 1000},
+        risk_level="high",
+        approvers=["sms:+15551234567", "mailto:ops@example.com"],
+    )
+
+    assert approval.approvers == ["sms:+15551234567", "mailto:ops@example.com"]
+from app.main import app
+
+
+def test_slack_routes_are_not_registered():
+    route_paths = {getattr(route, "path", "") for route in app.routes}
+
+    assert "/webhooks/slack/interactivity" not in route_paths
+    assert "/_debug/slack" not in route_paths
+"""Cursor pagination — Stripe-style opaque cursors over (created_at, id).
+
+Encodes the last-seen row's (created_at, id) into a base64-url token. Decoding
+filters strictly before that point, so pagination is stable even when new rows
+are inserted between page fetches (no offset drift, no duplicates).
+
+Usage in a router:
+
+    from app.services.pagination import decode_cursor, encode_cursor, paginate_stmt
+
+    page = await paginate_stmt(db, base_stmt, Model, limit=limit, cursor=cursor)
+    return {"data": [serialize(x) for x in page.items],
+            "has_more": page.has_more,
+            "next_cursor": page.next_cursor}
+"""
+from __future__ import annotations
+
+import base64
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from fastapi import HTTPException
+from sqlalchemy import and_, or_
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def encode_cursor(created_at: datetime, row_id: str) -> str:
+    payload = {"c": created_at.isoformat(), "i": row_id}
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def decode_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        raw = base64.urlsafe_b64decode(cursor + padding)
+        payload = json.loads(raw)
+        return datetime.fromisoformat(payload["c"]), str(payload["i"])
+    except Exception as e:  # noqa: BLE001 — any malformed cursor is a 400
+        raise HTTPException(400, "Invalid pagination cursor") from e
+
+
+@dataclass
+class Page:
+    items: list[Any]
+    has_more: bool
+    next_cursor: str | None
+
+
+async def paginate_stmt(
+    db: AsyncSession,
+    base_stmt,
+    model,
+    *,
+    limit: int,
+    cursor: str | None,
+) -> Page:
+    """Apply descending (created_at, id) keyset pagination to `base_stmt`.
+
+    `model` must have `.created_at` and `.id` columns. We fetch limit+1 rows
+    to detect has_more without a second COUNT query.
+    """
+    stmt = base_stmt
+    if cursor:
+        c_created, c_id = decode_cursor(cursor)
+        # Strictly "older than" the cursor in (created_at desc, id desc) order
+        stmt = stmt.where(
+            or_(
+                model.created_at < c_created,
+                and_(model.created_at == c_created, model.id < c_id),
+            )
+        )
+    stmt = stmt.order_by(model.created_at.desc(), model.id.desc()).limit(limit + 1)
+
+    result = await db.execute(stmt)
+    rows = list(result.scalars().all())
+
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    next_cursor = None
+    if has_more and items:
+        last = items[-1]
+        next_cursor = encode_cursor(last.created_at, last.id)
+    return Page(items=items, has_more=has_more, next_cursor=next_cursor)
+from fastapi import BackgroundTasks, HTTPException
+
+from app.config import settings
+from app.models import Approval
+from app.services.notifications import dispatch_approval_notifications
+
+
+def _resolve_approvers(caller_approvers: list, tenant) -> list:
+    """If caller specified approvers, use them. Otherwise fall back first to
+    the tenant's saved `default_approvers`, then to the global env-var
+    `DEFAULT_APPROVERS`. Raises 400 if all three are empty."""
+    if caller_approvers:
+        return caller_approvers
+    tenant_defaults = list(tenant.default_approvers or [])
+    if tenant_defaults:
+        return tenant_defaults
+    global_defaults = settings.default_approvers_list
+    if global_defaults:
+        return global_defaults
+    raise HTTPException(
+        400,
+        "approvers must be a non-empty list. Either pass `approvers` in the "
+        "request, or set tenant default_approvers via PATCH /v1/tenants/me, "
+        "or set DEFAULT_APPROVERS env on the server.",
+    )
+
+
+async def create_approval(db, tenant, payload, *, background_tasks: BackgroundTasks):
+    if background_tasks is None:
+        raise RuntimeError(
+            "create_approval requires request-scoped BackgroundTasks so "
+            "notifications cannot run before the approval transaction commits"
+        )
+    resolved_approvers = _resolve_approvers(payload.approvers, tenant)
+    approval = Approval(
+        tenant_id=tenant.id,
+        function_name=payload.function_name,
+        arguments=payload.arguments,
+        risk_level=payload.risk_level,
+        approvers=resolved_approvers,
+        timeout_seconds=payload.timeout_seconds,
+    )
+    db.add(approval)
+    # Keep the approval in the caller's transaction. The approvals route wraps
+    # this write in run_with_idempotency(), which commits the Approval and the
+    # completed IdempotencyKey response atomically. Committing here would leave
+    # a crash window where the approval exists but the claim still looks
+    # in-progress, allowing a stale retry to create a duplicate approval.
+    await db.flush()
+    await db.refresh(approval)
+    # Freeze a plain-data snapshot so background tasks don't touch a closed session.
+    snapshot = type("ApprovalSnapshot", (), {
+        "id": approval.id,
+        "tenant_id": approval.tenant_id,
+        "function_name": approval.function_name,
+        "arguments": approval.arguments,
+        "risk_level": approval.risk_level,
+        "approvers": list(approval.approvers or []),
+        "timeout_seconds": approval.timeout_seconds,
+    })()
+    background_tasks.add_task(dispatch_approval_notifications, snapshot, tenant)
+    return approval
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      - name: Sync deps
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Install aiosqlite (migration tests)
+        run: pip install aiosqlite
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Pytest (with coverage gate)
+        run: pytest -q --cov=app --cov-report=term-missing
+
+  # OpenAPI breaking-change gate. agent-middleware-api integrates against this
+  # API surface (its human-approval gate + permit-request flow), so a breaking
+  # schema change here breaks a production consumer even with zero shared code.
+  # Hard gate on purpose — unlike third-party advisories (pip-audit above),
+  # a breaking change to our own spec is always authored in the PR being
+  # tested, so it is always actionable by that PR's author.
+  # Intentional API change? Regenerate the baseline in the same PR:
+  #   python -c 'import json; from app.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))' > docs/openapi.baseline.json
+  # and flag the PR for a coordinated agent-middleware-api update.
+  # Behavioral (non-schema) contract points are pinned separately in
+  # tests/test_middleware_contract.py.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      - name: Sync deps
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Generate current OpenAPI spec
+        run: python -c 'import json; from app.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))' > /tmp/openapi.current.json
+
+      - name: oasdiff (breaking-change gate vs committed baseline)
+        run: |
+          curl -sSL https://github.com/oasdiff/oasdiff/releases/download/v1.28.0/oasdiff_1.28.0_linux_amd64.tar.gz | tar -xz -C /tmp oasdiff
+          /tmp/oasdiff breaking docs/openapi.baseline.json /tmp/openapi.current.json --fail-on ERR
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # gitleaks needs full history to scan past commits
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      # Dependency advisory scan. Resolves the project's dependency tree from
+      # pyproject.toml and checks it against the PyPI advisory database (OSV).
+      # Day-one policy: continue-on-error so a newly disclosed advisory in an
+      # existing/transitive dependency does NOT instantly red-line main for the
+      # whole team. The result stays visible in the job log; we triage and pin.
+      # Local dry run on this branch: "No known vulnerabilities found".
+      - name: pip-audit (dependency advisories)
+        continue-on-error: true
+        run: uvx pip-audit .
+
+      # Secret scan. Hard gate: a clean repo must stay clean. Local dry run on
+      # this branch found no leaks across 60 commits + the working tree, so any
+      # hit here is a real regression that should block the merge.
+      # Run the gitleaks binary directly rather than gitleaks-action: the
+      # action calls the GitHub API to post PR summaries and fails with
+      # "Resource not accessible by integration" without a permissions block.
+      # The binary needs no API access and is a clean hard gate (exit 1 on leak).
+      - name: gitleaks (secret scan)
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks git . --redact --no-banner
+rg: scripts: No such file or directory (os error 2)
+README.md:123:    "timeout_seconds":300
+README.md:172:`/openapi.json`. The deployed document is normally available at
+README.md:173:<https://api.pauseapi.app/openapi.json>.
+README.md:180:| `/v1/tenants` | Signup, verification, key recovery, and default approvers |
+README.md:192:### Downstream consumer contract
+README.md:196:the `timeout_seconds` bounds, and `/wait` response semantics. Those behaviors
+README.md:197:are pinned by `tests/test_middleware_contract.py`. CI also compares the OpenAPI
+README.md:198:schema with `docs/openapi.baseline.json`; an intentional breaking change must
+README.md:199:update the baseline in the same PR and be coordinated with the consumer.
+docs/openapi.baseline.json:29:          "timeout_seconds": {
+docs/openapi.baseline.json:353:  "openapi": "3.1.0",

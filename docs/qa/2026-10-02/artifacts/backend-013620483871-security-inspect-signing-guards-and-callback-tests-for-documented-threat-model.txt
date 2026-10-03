@@ -1,0 +1,862 @@
+     1	import base64
+     2	import hashlib
+     3	import hmac
+     4	import json
+     5	import time
+     6	
+     7	from app.config import settings
+     8	
+     9	VALID_DECISIONS = {"approved", "rejected"}
+    10	WEAK_SIGNING_SECRETS = {
+    11	    "",
+    12	    "change-me",
+    13	    "dev-only-replace",
+    14	    "replace-with-rs256-key",
+    15	    "replace-with-32-byte-random-secret",
+    16	}
+    17	
+    18	
+    19	class InvalidApprovalToken(ValueError):
+    20	    pass
+    21	
+    22	
+    23	def create_decision_token(
+    24	    action_id: str,
+    25	    decision: str,
+    26	    expires_in_seconds: int,
+    27	    now: int | None = None,
+    28	) -> str:
+    29	    if decision not in VALID_DECISIONS:
+    30	        raise ValueError("decision must be 'approved' or 'rejected'")
+    31	    issued_at = int(time.time() if now is None else now)
+    32	    payload = {
+    33	        "action_id": action_id,
+    34	        "decision": decision,
+    35	        "exp": issued_at + expires_in_seconds,
+    36	    }
+    37	    payload_part = _base64url_encode(
+    38	        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    39	    )
+    40	    signature_part = _sign(payload_part)
+    41	    return f"{payload_part}.{signature_part}"
+    42	
+    43	
+    44	def verify_decision_token(
+    45	    token: str,
+    46	    action_id: str,
+    47	    now: int | None = None,
+    48	) -> str:
+    49	    try:
+    50	        payload_part, signature_part = token.split(".", 1)
+    51	    except ValueError as exc:
+    52	        raise InvalidApprovalToken("Malformed approval token") from exc
+    53	
+    54	    expected_signature = _sign(payload_part)
+    55	    if not hmac.compare_digest(expected_signature, signature_part):
+    56	        raise InvalidApprovalToken("Invalid approval token signature")
+    57	
+    58	    try:
+    59	        payload = json.loads(_base64url_decode(payload_part))
+    60	    except (ValueError, TypeError) as exc:
+    61	        raise InvalidApprovalToken("Malformed approval token payload") from exc
+    62	
+    63	    if payload.get("action_id") != action_id:
+    64	        raise InvalidApprovalToken("Approval token action mismatch")
+    65	    decision = payload.get("decision")
+    66	    if decision not in VALID_DECISIONS:
+    67	        raise InvalidApprovalToken("Invalid approval token decision")
+    68	    current_time = int(time.time() if now is None else now)
+    69	    if int(payload.get("exp", 0)) < current_time:
+    70	        raise InvalidApprovalToken("Approval token expired")
+    71	    return decision
+    72	
+    73	
+    74	def _sign(payload_part: str) -> str:
+    75	    _require_strong_signing_secret()
+    76	    digest = hmac.new(
+    77	        settings.JWT_SECRET.encode(),
+    78	        payload_part.encode(),
+    79	        hashlib.sha256,
+    80	    ).digest()
+    81	    return _base64url_encode(digest)
+    82	
+    83	
+    84	def _base64url_encode(value: bytes) -> str:
+    85	    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+    86	
+    87	
+    88	def _base64url_decode(value: str) -> bytes:
+    89	    padding = "=" * (-len(value) % 4)
+    90	    return base64.urlsafe_b64decode(value + padding)
+    91	
+    92	
+    93	def _require_strong_signing_secret() -> None:
+    94	    secret = settings.JWT_SECRET
+    95	    if secret in WEAK_SIGNING_SECRETS or len(secret) < 32:
+    96	        raise RuntimeError("JWT_SECRET must be a strong random value for approval links")
+     1	from sqlalchemy import select
+     2	from test_support import TENANT_ID, client_for, make_sqlite_session, run
+     3	from twilio.request_validator import RequestValidator
+     4	
+     5	from app.config import settings
+     6	from app.models import Approval, ApproverContact, AuditEvent, NotificationAttempt
+     7	from app.services.contacts import destination_hash, normalize_phone_number
+     8	
+     9	
+    10	def _signature(url: str, params: dict[str, str], token: str) -> str:
+    11	    return RequestValidator(token).compute_signature(url, params)
+    12	
+    13	
+    14	def test_twilio_status_webhook_rejects_invalid_signature(monkeypatch):
+    15	    engine, session, tenant = run(make_sqlite_session())
+    16	    try:
+    17	        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+    18	        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+    19	        with client_for(session, tenant) as client:
+    20	            response = client.post(
+    21	                "/webhooks/twilio/status",
+    22	                data={"MessageSid": "SM123", "MessageStatus": "delivered"},
+    23	                headers={"X-Twilio-Signature": "bad"},
+    24	            )
+    25	
+    26	        assert response.status_code == 401
+    27	    finally:
+    28	        run(session.close())
+    29	        run(engine.dispose())
+    30	
+    31	
+    32	def test_twilio_status_webhook_updates_attempt_once(monkeypatch):
+    33	    engine, session, tenant = run(make_sqlite_session())
+    34	    try:
+    35	        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+    36	        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+    37	        approval = Approval(
+    38	            id="act_123",
+    39	            tenant_id=TENANT_ID,
+    40	            function_name="transfer_funds",
+    41	            arguments={"amount": 1000},
+    42	            risk_level="high",
+    43	            approvers=["sms:+15551234567"],
+    44	            timeout_seconds=300,
+    45	        )
+    46	        attempt = NotificationAttempt(
+    47	            tenant_id=TENANT_ID,
+    48	            action_id="act_123",
+    49	            channel="sms",
+    50	            destination_hash=destination_hash("+15551234567"),
+    51	            destination_last4="4567",
+    52	            provider="twilio",
+    53	            provider_message_sid="SM123",
+    54	            provider_status="accepted",
+    55	        )
+    56	        session.add_all([approval, attempt])
+    57	        run(session.commit())
+    58	
+    59	        params = {
+    60	            "MessageSid": "SM123",
+    61	            "MessageStatus": "undelivered",
+    62	            "ErrorCode": "30034",
+    63	            "ErrorMessage": "A2P registration incomplete",
+    64	        }
+    65	        with client_for(session, tenant) as client:
+    66	            signature = _signature("http://testserver/webhooks/twilio/status", params, "secret")
+    67	            first = client.post(
+    68	                "/webhooks/twilio/status",
+    69	                data=params,
+    70	                headers={"X-Twilio-Signature": signature},
+    71	            )
+    72	            second = client.post(
+    73	                "/webhooks/twilio/status",
+    74	                data=params,
+    75	                headers={"X-Twilio-Signature": signature},
+    76	            )
+    77	
+    78	        assert first.status_code == 200
+    79	        assert second.status_code == 200
+    80	        run(session.refresh(attempt))
+    81	        assert attempt.provider_status == "undelivered"
+    82	        assert attempt.error_code == "30034"
+    83	
+    84	        events = run(session.execute(select(AuditEvent)))
+    85	        assert [event.execution_result for event in events.scalars().all()] == [
+    86	            "notification:sms:undelivered"
+    87	        ]
+    88	    finally:
+    89	        run(session.close())
+    90	        run(engine.dispose())
+    91	
+    92	
+    93	def test_twilio_inbound_stop_revokes_and_start_reactivates_contact(monkeypatch):
+    94	    engine, session, tenant = run(make_sqlite_session())
+    95	    try:
+    96	        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+    97	        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+    98	        phone = normalize_phone_number("+15551234567")
+    99	        contact = ApproverContact(
+   100	            tenant_id=TENANT_ID,
+   101	            channel="sms",
+   102	            destination=phone,
+   103	            destination_hash=destination_hash(phone),
+   104	            destination_last4=phone[-4:],
+   105	            display_name="Chris",
+   106	            consent_status="active",
+   107	            consent_source="dashboard",
+   108	        )
+   109	        session.add(contact)
+   110	        run(session.commit())
+   111	
+   112	        stop = {"From": "+15551234567", "Body": "STOP", "OptOutType": "STOP"}
+   113	        start = {"From": "+15551234567", "Body": "START", "OptOutType": "START"}
+   114	        with client_for(session, tenant) as client:
+   115	            stop_signature = _signature("http://testserver/webhooks/twilio/inbound", stop, "secret")
+   116	            stop_response = client.post(
+   117	                "/webhooks/twilio/inbound",
+   118	                data=stop,
+   119	                headers={"X-Twilio-Signature": stop_signature},
+   120	            )
+   121	        assert stop_response.status_code == 200
+   122	        run(session.refresh(contact))
+   123	        assert contact.consent_status == "revoked"
+   124	        assert contact.revoked_at is not None
+   125	
+   126	        with client_for(session, tenant) as client:
+   127	            blocked = client.post(
+   128	                "/v1/approvals",
+   129	                json={
+   130	                    "function_name": "transfer_funds",
+   131	                    "arguments": {"amount": 1000},
+   132	                    "risk_level": "high",
+   133	                    "approvers": ["sms:+15551234567"],
+   134	                    "timeout_seconds": 300,
+   135	                },
+   136	            )
+   137	            start_signature = _signature("http://testserver/webhooks/twilio/inbound", start, "secret")
+   138	            start_response = client.post(
+   139	                "/webhooks/twilio/inbound",
+   140	                data=start,
+   141	                headers={"X-Twilio-Signature": start_signature},
+   142	            )
+   143	
+   144	        assert blocked.status_code == 400
+   145	        assert start_response.status_code == 200
+   146	        run(session.refresh(contact))
+   147	        assert contact.consent_status == "active"
+   148	        assert contact.revoked_at is None
+   149	    finally:
+   150	        run(session.close())
+   151	        run(engine.dispose())
+     1	"""Coverage for app/services/onboarding.py — token round-trip + email builders."""
+     2	from types import SimpleNamespace
+     3	
+     4	import pytest
+     5	
+     6	import app.services.onboarding as onboarding
+     7	from app.config import settings
+     8	
+     9	
+    10	def test_token_round_trip_verify():
+    11	    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
+    12	    assert onboarding.verify_token(token, expected_purpose="verify") == "ten_abc"
+    13	
+    14	
+    15	def test_verify_token_malformed():
+    16	    with pytest.raises(onboarding.InvalidOnboardingToken):
+    17	        onboarding.verify_token("nodot", expected_purpose="verify")
+    18	
+    19	
+    20	def test_verify_token_bad_signature():
+    21	    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
+    22	    part, _sig = token.split(".", 1)
+    23	    with pytest.raises(onboarding.InvalidOnboardingToken):
+    24	        onboarding.verify_token(f"{part}.tampered", expected_purpose="verify")
+    25	
+    26	
+    27	def test_verify_token_wrong_purpose():
+    28	    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
+    29	    with pytest.raises(onboarding.InvalidOnboardingToken):
+    30	        onboarding.verify_token(token, expected_purpose="recover")
+    31	
+    32	
+    33	def test_verify_token_expired():
+    34	    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=-1)
+    35	    with pytest.raises(onboarding.InvalidOnboardingToken):
+    36	        onboarding.verify_token(token, expected_purpose="verify")
+    37	
+    38	
+    39	def test_url_builders():
+    40	    assert onboarding.verify_url("tok").endswith("/verify?t=tok")
+    41	    assert onboarding.recover_url("tok").endswith("/recover?t=tok")
+    42	    assert onboarding._dashboard_origin().startswith("http")
+    43	
+    44	
+    45	def test_send_skips_without_resend_key(monkeypatch):
+    46	    """_send is a no-op (no httpx call) when RESEND_API_KEY is unset."""
+    47	    import asyncio
+    48	
+    49	    monkeypatch.setattr(settings, "RESEND_API_KEY", "")
+    50	    # No network: should return quietly even with a bogus client patched in
+    51	    asyncio.run(onboarding._send("to@x.io", "subj", "<p>hi</p>"))
+    52	
+    53	
+    54	def test_send_welcome_email_invokes_send(monkeypatch):
+    55	    import asyncio
+    56	
+    57	    captured = {}
+    58	
+    59	    async def fake_send(to, subject, html):
+    60	        captured["to"] = to
+    61	        captured["subject"] = subject
+    62	        captured["html"] = html
+    63	
+    64	    monkeypatch.setattr(onboarding, "_send", fake_send)
+    65	    tenant = SimpleNamespace(id="ten_abc", name="Chris", email="chris@acme.io")
+    66	    asyncio.run(onboarding.send_welcome_email(tenant, "[REDACTED]"))
+    67	    assert captured["to"] == "chris@acme.io"
+    68	    assert "verify" in captured["subject"].lower()
+    69	    assert "Verify email" in captured["html"]
+    70	
+    71	
+    72	def test_send_recovery_email_invokes_send(monkeypatch):
+    73	    import asyncio
+    74	
+    75	    captured = {}
+    76	
+    77	    async def fake_send(to, subject, html):
+    78	        captured["to"] = to
+    79	        captured["subject"] = subject
+    80	
+    81	    monkeypatch.setattr(onboarding, "_send", fake_send)
+    82	    tenant = SimpleNamespace(id="ten_abc", name="Chris", email="chris@acme.io")
+    83	    asyncio.run(onboarding.send_recovery_email(tenant))
+    84	    assert captured["to"] == "chris@acme.io"
+    85	    assert "recover" in captured["subject"].lower()
+    86	
+    87	
+    88	def test_send_makes_http_call_with_key(monkeypatch):
+    89	    """When RESEND_API_KEY is set, _send POSTs to Resend (mocked httpx)."""
+    90	    import asyncio
+    91	
+    92	    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test")
+    93	    posted = {}
+    94	
+    95	    class FakeResponse:
+    96	        status_code = 200
+    97	        text = "ok"
+    98	
+    99	    class FakeClient:
+   100	        def __init__(self, *a, **k):
+   101	            pass
+   102	
+   103	        async def __aenter__(self):
+   104	            return self
+   105	
+   106	        async def __aexit__(self, *a):
+   107	            return False
+   108	
+   109	        async def post(self, url, headers=None, json=None):
+   110	            posted["url"] = url
+   111	            posted["json"] = json
+   112	            return FakeResponse()
+   113	
+   114	    monkeypatch.setattr(onboarding.httpx, "AsyncClient", FakeClient)
+   115	    asyncio.run(onboarding._send("to@x.io", "subj", "<p>hi</p>"))
+   116	    assert posted["url"] == "https://api.resend.com/emails"
+   117	    assert posted["json"]["to"] == ["to@x.io"]
+     1	"""Coverage for app/routers/webhooks.py and app/services/webhooks.py."""
+     2	import asyncio
+     3	
+     4	from test_support import client_for, make_sqlite_session, run
+     5	
+     6	import app.services.webhooks as whsvc
+     7	from app.models import Approval, WebhookDelivery, WebhookEndpoint
+     8	
+     9	
+    10	# ── Router ────────────────────────────────────────────────────────────
+    11	def test_create_webhook_returns_secret_once():
+    12	    engine, session, tenant = run(make_sqlite_session())
+    13	    try:
+    14	        with client_for(session, tenant) as client:
+    15	            resp = client.post(
+    16	                "/v1/webhooks",
+    17	                json={"url": "https://example.com/hook", "description": "test"},
+    18	            )
+    19	        assert resp.status_code == 200
+    20	        body = resp.json()
+    21	        assert body["secret"].startswith("whsec_")
+    22	        assert body["url"] == "https://example.com/hook"
+    23	        # list does NOT include the secret
+    24	        with client_for(session, tenant) as client:
+    25	            listed = client.get("/v1/webhooks")
+    26	        assert listed.status_code == 200
+    27	        items = listed.json()
+    28	        assert len(items) == 1
+    29	        assert "secret" not in items[0]
+    30	    finally:
+    31	        run(session.close())
+    32	        run(engine.dispose())
+    33	
+    34	
+    35	def test_create_webhook_rejects_bad_url():
+    36	    engine, session, tenant = run(make_sqlite_session())
+    37	    try:
+    38	        with client_for(session, tenant) as client:
+    39	            resp = client.post("/v1/webhooks", json={"url": "ftp://example.com"})
+    40	        assert resp.status_code == 400
+    41	        assert "url must start" in resp.json()["detail"]
+    42	    finally:
+    43	        run(session.close())
+    44	        run(engine.dispose())
+    45	
+    46	
+    47	def test_create_webhook_rejects_unknown_event_filter():
+    48	    engine, session, tenant = run(make_sqlite_session())
+    49	    try:
+    50	        with client_for(session, tenant) as client:
+    51	            resp = client.post(
+    52	                "/v1/webhooks",
+    53	                json={"url": "https://x.io/h", "event_filter": ["approval.exploded"]},
+    54	            )
+    55	        assert resp.status_code == 400
+    56	        assert "Unknown event" in resp.json()["detail"]
+    57	    finally:
+    58	        run(session.close())
+    59	        run(engine.dispose())
+    60	
+    61	
+    62	def test_disable_webhook_soft_deletes():
+    63	    engine, session, tenant = run(make_sqlite_session())
+    64	    try:
+    65	        with client_for(session, tenant) as client:
+    66	            created = client.post("/v1/webhooks", json={"url": "https://x.io/h"})
+    67	            wid = created.json()["id"]
+    68	            resp = client.delete(f"/v1/webhooks/{wid}")
+    69	        assert resp.status_code == 200
+    70	        assert resp.json()["disabled_at"] is not None
+    71	    finally:
+    72	        run(session.close())
+    73	        run(engine.dispose())
+    74	
+    75	
+    76	def test_disable_webhook_404_for_unknown_id():
+    77	    engine, session, tenant = run(make_sqlite_session())
+    78	    try:
+    79	        with client_for(session, tenant) as client:
+    80	            resp = client.delete("/v1/webhooks/whk_nope")
+    81	        assert resp.status_code == 404
+    82	    finally:
+    83	        run(session.close())
+    84	        run(engine.dispose())
+    85	
+    86	
+    87	def test_list_deliveries_legacy_array_and_paginated():
+    88	    engine, session, tenant = run(make_sqlite_session())
+    89	    ep = WebhookEndpoint(tenant_id=tenant.id, url="https://x.io/h", secret="whsec_a")
+    90	    session.add(ep)
+    91	    run(session.flush())
+    92	    for i in range(3):
+    93	        session.add(
+    94	            WebhookDelivery(
+    95	                endpoint_id=ep.id,
+    96	                tenant_id=tenant.id,
+    97	                event_type="approval.approved",
+    98	                action_id=f"act_{i}",
+    99	                attempt=1,
+   100	                status_code=200,
+   101	            )
+   102	        )
+   103	    run(session.commit())
+   104	    try:
+   105	        with client_for(session, tenant) as client:
+   106	            legacy = client.get("/v1/webhooks/deliveries")
+   107	            assert legacy.status_code == 200
+   108	            assert isinstance(legacy.json(), list)
+   109	            assert len(legacy.json()) == 3
+   110	
+   111	            paged = client.get("/v1/webhooks/deliveries?limit=2")
+   112	            assert paged.status_code == 200
+   113	            env = paged.json()
+   114	            assert env["has_more"] is True
+   115	            assert len(env["data"]) == 2
+   116	    finally:
+   117	        run(session.close())
+   118	        run(engine.dispose())
+   119	
+   120	
+   121	# ── Service: pure helpers ─────────────────────────────────────────────
+   122	def test_generate_secret_prefix_and_uniqueness():
+   123	    a = whsvc.generate_secret()
+   124	    b = whsvc.generate_secret()
+   125	    assert a.startswith("whsec_")
+   126	    assert a != b
+   127	
+   128	
+   129	def test_sign_body_is_deterministic_hmac():
+   130	    sig1 = whsvc.sign_body("secret", b"hello")
+   131	    sig2 = whsvc.sign_body("secret", b"hello")
+   132	    sig3 = whsvc.sign_body("other", b"hello")
+   133	    assert sig1 == sig2
+   134	    assert sig1 != sig3
+   135	    assert len(sig1) == 64  # sha256 hex
+   136	
+   137	
+   138	def test_event_type_for_maps_decisions():
+   139	    approved = Approval(tenant_id="t", function_name="f", decision="approved")
+   140	    rejected = Approval(tenant_id="t", function_name="f", decision="rejected")
+   141	    pending = Approval(tenant_id="t", function_name="f", decision="pending")
+   142	    assert whsvc._event_type_for(approved) == "approval.approved"
+   143	    assert whsvc._event_type_for(rejected) == "approval.rejected"
+   144	    assert whsvc._event_type_for(pending) is None
+   145	
+   146	
+   147	def test_matches_filter():
+   148	    e_all = WebhookEndpoint(tenant_id="t", url="u", secret="s", event_filter=None)
+   149	    e_only = WebhookEndpoint(
+   150	        tenant_id="t", url="u", secret="s", event_filter=["approval.rejected"]
+   151	    )
+   152	    assert whsvc._matches_filter(e_all, "approval.approved") is True
+   153	    assert whsvc._matches_filter(e_only, "approval.approved") is False
+   154	    assert whsvc._matches_filter(e_only, "approval.rejected") is True
+   155	
+   156	
+   157	def test_build_payload_shape():
+   158	    approval = Approval(
+   159	        id="act_1",
+   160	        tenant_id="t",
+   161	        function_name="wire",
+   162	        arguments={"amount": 100},
+   163	        risk_level="high",
+   164	        decision="approved",
+   165	        decided_by="boss@x.io",
+   166	    )
+   167	    payload = whsvc._build_payload("approval.approved", approval, "whd_x")
+   168	    assert payload["id"] == "whd_x"
+   169	    assert payload["event"] == "approval.approved"
+   170	    assert payload["action_id"] == "act_1"
+   171	    assert payload["function_name"] == "wire"
+   172	    assert payload["decided_at"] is None  # decided_at not set
+   173	
+   174	
+   175	# ── Service: dispatch short-circuits ──────────────────────────────────
+   176	def test_dispatch_skips_non_decision():
+   177	    engine, session, tenant = run(make_sqlite_session())
+   178	    approval = Approval(tenant_id=tenant.id, function_name="f", decision="pending")
+   179	    session.add(approval)
+   180	    run(session.commit())
+   181	    try:
+   182	        # Should return without spawning tasks (no event type for pending)
+   183	        run(whsvc.dispatch_approval_webhook(session, approval))
+   184	    finally:
+   185	        run(session.close())
+   186	        run(engine.dispose())
+   187	
+   188	
+   189	def test_dispatch_no_endpoints_is_noop():
+   190	    engine, session, tenant = run(make_sqlite_session())
+   191	    approval = Approval(tenant_id=tenant.id, function_name="f", decision="approved")
+   192	    session.add(approval)
+   193	    run(session.commit())
+   194	    try:
+   195	        run(whsvc.dispatch_approval_webhook(session, approval))
+   196	    finally:
+   197	        run(session.close())
+   198	        run(engine.dispose())
+   199	
+   200	
+   201	def test_dispatch_spawns_delivery_task(monkeypatch):
+   202	    """dispatch_approval_webhook should create a task per matching endpoint."""
+   203	    engine, session, tenant = run(make_sqlite_session())
+   204	    ep = WebhookEndpoint(tenant_id=tenant.id, url="https://x.io/h", secret="whsec_a")
+   205	    session.add(ep)
+   206	    approval = Approval(tenant_id=tenant.id, function_name="f", decision="approved")
+   207	    session.add(approval)
+   208	    run(session.commit())
+   209	
+   210	    spawned = []
+   211	
+   212	    async def fake_deliver(endpoint, event_type, appr):
+   213	        spawned.append((endpoint.id, event_type))
+   214	
+   215	    monkeypatch.setattr(whsvc, "_deliver_with_retries", fake_deliver)
+   216	
+   217	    async def scenario():
+   218	        await whsvc.dispatch_approval_webhook(session, approval)
+   219	        # let the spawned task run
+   220	        await asyncio.sleep(0)
+   221	
+   222	    try:
+   223	        run(scenario())
+   224	        assert spawned == [(ep.id, "approval.approved")]
+   225	    finally:
+   226	        run(session.close())
+   227	        run(engine.dispose())
+     1	"""Structured (JSON) logging via structlog.
+     2	
+     3	Configures structlog to render every log line as a single JSON object
+     4	with timestamp, level, logger, event, plus any bound context (request_id,
+     5	tenant_id, route, etc.). Wired into FastAPI's request lifecycle via
+     6	RequestContextMiddleware.
+     7	
+     8	Why JSON: Railway's log search is grep over raw text. JSON lines let us
+     9	filter by `tenant_id` / `route` / `request_id` without false positives.
+    10	When we eventually ship logs to Datadog/Better Stack/etc, the JSON
+    11	fields become indexed dimensions for free.
+    12	"""
+    13	from __future__ import annotations
+    14	
+    15	import logging
+    16	import secrets
+    17	import sys
+    18	from contextvars import ContextVar
+    19	from typing import Any
+    20	
+    21	import structlog
+    22	from starlette.middleware.base import BaseHTTPMiddleware
+    23	from starlette.requests import Request
+    24	from starlette.responses import Response
+    25	
+    26	# Per-request context that gets stamped onto every log line emitted during
+    27	# the request. set() in middleware, .get() inside structlog processor.
+    28	_request_ctx: ContextVar[dict[str, Any] | None] = ContextVar("_request_ctx", default=None)
+    29	
+    30	
+    31	def _inject_request_ctx(_, __, event_dict: dict) -> dict:
+    32	    """structlog processor: merge any active request context into the log."""
+    33	    ctx = _request_ctx.get() or {}
+    34	    for k, v in ctx.items():
+    35	        event_dict.setdefault(k, v)
+    36	    return event_dict
+    37	
+    38	
+    39	def configure_logging(level: str = "INFO") -> None:
+    40	    """Replace stdlib logging output with JSON structlog. Idempotent."""
+    41	    timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
+    42	
+    43	    shared_processors = [
+    44	        structlog.contextvars.merge_contextvars,
+    45	        structlog.stdlib.add_log_level,
+    46	        _inject_request_ctx,
+    47	        timestamper,
+    48	        structlog.processors.StackInfoRenderer(),
+    49	        structlog.processors.format_exc_info,
+    50	    ]
+    51	
+    52	    structlog.configure(
+    53	        processors=shared_processors + [structlog.processors.JSONRenderer()],
+    54	        wrapper_class=structlog.make_filtering_bound_logger(
+    55	            logging.getLevelName(level.upper()) if isinstance(level, str) else level
+    56	        ),
+    57	        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+    58	        cache_logger_on_first_use=True,
+    59	    )
+    60	
+    61	    # Route stdlib logging (FastAPI / uvicorn / SQLAlchemy) through structlog
+    62	    # so we get JSON for those too — otherwise we'd have two log formats.
+    63	    formatter = structlog.stdlib.ProcessorFormatter(
+    64	        foreign_pre_chain=shared_processors,
+    65	        processors=[
+    66	            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+    67	            structlog.processors.JSONRenderer(),
+    68	        ],
+    69	    )
+    70	    handler = logging.StreamHandler(sys.stdout)
+    71	    handler.setFormatter(formatter)
+    72	
+    73	    root = logging.getLogger()
+    74	    # Don't double up handlers if reload re-imports this module
+    75	    root.handlers = [handler]
+    76	    root.setLevel(level.upper())
+    77	
+    78	    # Quieter health-check noise from uvicorn access logs
+    79	    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    80	
+    81	
+    82	class RequestContextMiddleware(BaseHTTPMiddleware):
+    83	    """Stamp every log line emitted during a request with request_id +
+    84	    method + route, and emit a structured access log on completion.
+    85	
+    86	    Tenant_id is added downstream by the auth dependency when a request
+    87	    hits an authenticated route — see auth.get_current_tenant.
+    88	    """
+    89	
+    90	    async def dispatch(self, request: Request, call_next) -> Response:
+    91	        request_id = request.headers.get("x-request-id") or secrets.token_hex(8)
+    92	        ctx = {
+    93	            "request_id": request_id,
+    94	            "method": request.method,
+    95	            "route": request.url.path,
+    96	        }
+    97	        token = _request_ctx.set(ctx)
+    98	        logger = structlog.get_logger("http")
+    99	        try:
+   100	            response = await call_next(request)
+   101	        except Exception:
+   102	            logger.exception("request.error")
+   103	            raise
+   104	        else:
+   105	            logger.info(
+   106	                "request.completed",
+   107	                status_code=response.status_code,
+   108	            )
+   109	            response.headers["X-Request-Id"] = request_id
+   110	            # Surface rate-limit context if the handler enforced a bucket
+   111	            rl = getattr(request.state, "rate_limit_headers", None)
+   112	            if isinstance(rl, dict):
+   113	                for k, v in rl.items():
+   114	                    response.headers[k] = v
+   115	            return response
+   116	        finally:
+   117	            _request_ctx.reset(token)
+   118	
+   119	
+   120	def bind_request_context(**fields: Any) -> None:
+   121	    """Call from anywhere inside a request handler to attach additional
+   122	    fields (tenant_id, action_id, etc.) to every subsequent log line in
+   123	    this request."""
+   124	    current = dict(_request_ctx.get() or {})
+   125	    current.update({k: v for k, v in fields.items() if v is not None})
+   126	    _request_ctx.set(current)
+   127	
+   128	
+   129	def get_logger(name: str = "sentinel") -> structlog.stdlib.BoundLogger:
+   130	    return structlog.get_logger(name)
+     1	from datetime import datetime
+     2	from typing import Any
+     3	
+     4	from pydantic import BaseModel, ConfigDict, field_validator
+     5	
+     6	VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
+     7	APPROVER_HELP = (
+     8	    "approvers must be a non-empty list. "
+     9	    "Use email (e.g. 'alice@acme.com'), 'mailto:alice@acme.com', or 'sms:+15551234567'."
+    10	)
+    11	
+    12	
+    13	def _is_supported_approver(value: str) -> bool:
+    14	    if value.startswith("sms:"):
+    15	        return bool(value[len("sms:"):].strip())
+    16	    if value.startswith("mailto:"):
+    17	        return "@" in value[len("mailto:"):]
+    18	    return "@" in value and ":" not in value.split("@", 1)[0]
+    19	
+    20	
+    21	class TenantSignup(BaseModel):
+    22	    name: str
+    23	    email: str
+    24	    mode: str = "live"  # "live" | "test" — test workspaces never fire real email/SMS
+    25	
+    26	    @field_validator("mode")
+    27	    @classmethod
+    28	    def _valid_mode(cls, v: str) -> str:
+    29	        if v not in ("live", "test"):
+    30	            raise ValueError("mode must be 'live' or 'test'")
+    31	        return v
+    32	
+    33	
+    34	class TenantSignupResponse(BaseModel):
+    35	    tenant_id: str
+    36	    api_key: str
+    37	
+    38	
+    39	class ApprovalCreate(BaseModel):
+    40	    function_name: str
+    41	    arguments: dict[str, Any] = {}
+    42	    risk_level: str = "medium"
+    43	    approvers: list[str] = []
+    44	    timeout_seconds: int = 300
+    45	
+    46	    @field_validator("approvers")
+    47	    @classmethod
+    48	    def _validate_approvers(cls, v: list[str]) -> list[str]:
+    49	        """Strip whitespace + format-check; empty list is OK here (per-tenant
+    50	        / global defaults are applied in the service layer where we have
+    51	        tenant context)."""
+    52	        approvers = [x.strip() for x in v if isinstance(x, str) and x.strip()]
+    53	        if any(not _is_supported_approver(a) for a in approvers):
+    54	            raise ValueError(APPROVER_HELP)
+    55	        return approvers
+    56	
+    57	    @field_validator("risk_level")
+    58	    @classmethod
+    59	    def _valid_risk(cls, v: str) -> str:
+    60	        if v not in VALID_RISK_LEVELS:
+    61	            raise ValueError(f"risk_level must be one of {sorted(VALID_RISK_LEVELS)}")
+    62	        return v
+    63	
+    64	    @field_validator("timeout_seconds")
+    65	    @classmethod
+    66	    def _positive_timeout(cls, v: int) -> int:
+    67	        if v < 1 or v > 86400:
+    68	            raise ValueError("timeout_seconds must be between 1 and 86400")
+    69	        return v
+    70	
+    71	
+    72	class ApprovalResponse(BaseModel):
+    73	    model_config = ConfigDict(from_attributes=True)
+    74	
+    75	    id: str
+    76	    tenant_id: str
+    77	    function_name: str
+    78	    arguments: dict[str, Any] | None = None
+    79	    risk_level: str
+    80	    approvers: list[str] | None = None
+    81	    timeout_seconds: int
+    82	    decision: str
+    83	    decided_by: str | None = None
+    84	    decided_at: datetime | None = None
+    85	    reason: str | None = None
+    86	    created_at: datetime
+    87	
+    88	
+    89	class DecisionRequest(BaseModel):
+    90	    decision: str
+    91	    decided_by: str
+    92	    reason: str | None = None
+    93	
+    94	
+    95	class TokenDecisionRequest(BaseModel):
+    96	    token: str
+    97	
+    98	
+    99	class TenantSettingsUpdate(BaseModel):
+   100	    """Mutable tenant settings. All fields optional — only those set are touched."""
+   101	    default_approvers: list[str] | None = None
+   102	
+   103	
+   104	class AuditEventCreate(BaseModel):
+   105	    action_id: str
+   106	    execution_result: str
+   107	    error: str | None = None
+   108	
+   109	
+   110	class ApproverContactCreate(BaseModel):
+   111	    channel: str = "sms"
+   112	    phone_number: str
+   113	    display_name: str | None = None
+   114	    consent_attested: bool = False
+   115	    consent_source: str = "dashboard"
+   116	    consent_note: str | None = None
+   117	
+   118	    @field_validator("channel")
+   119	    @classmethod
+   120	    def _sms_only(cls, v: str) -> str:
+   121	        if v != "sms":
+   122	            raise ValueError("only sms contacts are supported")
+   123	        return v
+   124	
+   125	
+   126	class ApproverContactResponse(BaseModel):
+   127	    model_config = ConfigDict(from_attributes=True)
+   128	
+   129	    id: str
+   130	    tenant_id: str
+   131	    channel: str
+   132	    phone_number: str
+   133	    destination_last4: str
+   134	    display_name: str | None = None
+   135	    consent_status: str
+   136	    consent_source: str
+   137	    consent_note: str | None = None
+   138	    consented_at: datetime | None = None
+   139	    revoked_at: datetime | None = None
+   140	    created_at: datetime
+   141	    updated_at: datetime

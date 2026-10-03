@@ -1,0 +1,446 @@
+#!/usr/bin/env python3
+"""Run QA pytest without .env reads or network sockets, including localhost."""
+import sys
+from pathlib import Path
+
+from pydantic_settings import BaseSettings
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+_original_init = BaseSettings.__init__
+
+
+def _without_env_file(self, **values):
+    values["_env_file"] = None
+    _original_init(self, **values)
+
+
+BaseSettings.__init__ = _without_env_file
+
+import pytest  # noqa: E402
+
+raise SystemExit(pytest.main(["--disable-socket", "--allow-unix-socket", *sys.argv[1:]]))
+     1	from datetime import datetime
+     2	from typing import Any
+     3	
+     4	from pydantic import BaseModel, ConfigDict, field_validator
+     5	
+     6	VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
+     7	APPROVER_HELP = (
+     8	    "approvers must be a non-empty list. "
+     9	    "Use email (e.g. 'alice@acme.com'), 'mailto:alice@acme.com', or 'sms:+15551234567'."
+    10	)
+    11	
+    12	
+    13	def _is_supported_approver(value: str) -> bool:
+    14	    if value.startswith("sms:"):
+    15	        return bool(value[len("sms:"):].strip())
+    16	    if value.startswith("mailto:"):
+    17	        return "@" in value[len("mailto:"):]
+    18	    return "@" in value and ":" not in value.split("@", 1)[0]
+    19	
+    20	
+    21	class TenantSignup(BaseModel):
+    22	    name: str
+    23	    email: str
+    24	    mode: str = "live"  # "live" | "test" — test workspaces never fire real email/SMS
+    25	
+    26	    @field_validator("mode")
+    27	    @classmethod
+    28	    def _valid_mode(cls, v: str) -> str:
+    29	        if v not in ("live", "test"):
+    30	            raise ValueError("mode must be 'live' or 'test'")
+    31	        return v
+    32	
+    33	
+    34	class TenantSignupResponse(BaseModel):
+    35	    tenant_id: str
+    36	    api_key: str
+    37	
+    38	
+    39	class ApprovalCreate(BaseModel):
+    40	    function_name: str
+    41	    arguments: dict[str, Any] = {}
+    42	    risk_level: str = "medium"
+    43	    approvers: list[str] = []
+    44	    timeout_seconds: int = 300
+    45	
+    46	    @field_validator("approvers")
+    47	    @classmethod
+    48	    def _validate_approvers(cls, v: list[str]) -> list[str]:
+    49	        """Strip whitespace + format-check; empty list is OK here (per-tenant
+    50	        / global defaults are applied in the service layer where we have
+    51	        tenant context)."""
+    52	        approvers = [x.strip() for x in v if isinstance(x, str) and x.strip()]
+    53	        if any(not _is_supported_approver(a) for a in approvers):
+    54	            raise ValueError(APPROVER_HELP)
+    55	        return approvers
+    56	
+    57	    @field_validator("risk_level")
+    58	    @classmethod
+    59	    def _valid_risk(cls, v: str) -> str:
+    60	        if v not in VALID_RISK_LEVELS:
+    61	            raise ValueError(f"risk_level must be one of {sorted(VALID_RISK_LEVELS)}")
+    62	        return v
+    63	
+    64	    @field_validator("timeout_seconds")
+    65	    @classmethod
+    66	    def _positive_timeout(cls, v: int) -> int:
+    67	        if v < 1 or v > 86400:
+    68	            raise ValueError("timeout_seconds must be between 1 and 86400")
+    69	        return v
+    70	
+    71	
+    72	class ApprovalResponse(BaseModel):
+    73	    model_config = ConfigDict(from_attributes=True)
+    74	
+    75	    id: str
+    76	    tenant_id: str
+    77	    function_name: str
+    78	    arguments: dict[str, Any] | None = None
+    79	    risk_level: str
+    80	    approvers: list[str] | None = None
+    81	    timeout_seconds: int
+    82	    decision: str
+    83	    decided_by: str | None = None
+    84	    decided_at: datetime | None = None
+    85	    reason: str | None = None
+    86	    created_at: datetime
+    87	
+    88	
+    89	class DecisionRequest(BaseModel):
+    90	    decision: str
+    91	    decided_by: str
+    92	    reason: str | None = None
+    93	
+    94	
+    95	class TokenDecisionRequest(BaseModel):
+     1	import asyncio
+     2	from datetime import UTC, datetime
+     3	
+     4	from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+     5	from sqlalchemy import select
+     6	from sqlalchemy.exc import IntegrityError
+     7	from sqlalchemy.ext.asyncio import AsyncSession
+     8	
+     9	from app.auth import get_current_tenant
+    10	from app.db import get_db
+    11	from app.models import Approval, Tenant
+    12	from app.schemas import ApprovalCreate, DecisionRequest, TokenDecisionRequest
+    13	from app.services.approval_service import create_approval
+    14	from app.services.approval_tokens import InvalidApprovalToken, verify_decision_token
+    15	from app.services.audit_log import append_audit_event
+    16	from app.services.contacts import find_active_sms_contact, sms_approver_phone
+    17	from app.services.decision_bus import bus, notify_decision
+    18	from app.services.idempotency import run_with_idempotency
+    19	from app.services.nonce_store import is_nonce_consumed, mark_nonce_consumed, token_nonce
+    20	from app.services.pagination import paginate_stmt
+    21	from app.services.webhooks import dispatch_approval_webhook
+    22	
+    23	router = APIRouter()
+    24	
+    25	
+    26	def _utcnow():
+    27	    return datetime.now(UTC).replace(tzinfo=None)
+    28	
+    29	
+    30	async def _rollback_or_reraise_integrity_error(db, error: IntegrityError) -> None:
+    31	    """Clean up an integrity failure without hiding it behind cleanup errors."""
+    32	    try:
+    33	        await db.rollback()
+    34	    except asyncio.CancelledError:
+    35	        raise
+    36	    except Exception:
+    37	        raise error from None
+    38	
+    39	
+    40	def _serialize(a: Approval) -> dict:
+    41	    return {
+    42	        "action_id": a.id,
+    43	        "id": a.id,
+    44	        "tenant_id": a.tenant_id,
+    45	        "function_name": a.function_name,
+    46	        "arguments": a.arguments,
+    47	        "risk_level": a.risk_level,
+    48	        "approvers": a.approvers,
+    49	        "timeout_seconds": a.timeout_seconds,
+    50	        "decision": a.decision,
+    51	        "status": a.decision,
+    52	        "decided_by": a.decided_by,
+    53	        "decided_at": a.decided_at,
+    54	        "reason": a.reason,
+    55	        "created_at": a.created_at,
+    56	    }
+    57	
+    58	
+    59	@router.post("")
+    60	async def create(
+    61	    payload: ApprovalCreate,
+    62	    background_tasks: BackgroundTasks,
+    63	    db: AsyncSession = Depends(get_db),
+    64	    tenant: Tenant = Depends(get_current_tenant),
+    65	    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    66	):
+    67	    """Create an approval. Pass `Idempotency-Key: <opaque>` to make retries
+    68	    safe — the same key replays the original response without firing
+    69	    duplicate emails or creating duplicate rows."""
+    70	
+    71	    async def _do_create() -> dict:
+    72	        for approver in payload.approvers:
+    73	            phone = sms_approver_phone(approver)
+    74	            if phone and not await find_active_sms_contact(db, tenant.id, phone):
+    75	                raise HTTPException(
+    76	                    400, "SMS approver requires active SMS consent contact"
+    77	                )
+    78	        approval = await create_approval(
+    79	            db, tenant, payload, background_tasks=background_tasks
+    80	        )
+    81	        return {
+    82	            "action_id": approval.id,
+    83	            "status": approval.decision,
+    84	            **_serialize(approval),
+    85	        }
+    86	
+    87	    return await run_with_idempotency(
+    88	        db,
+    89	        tenant_id=tenant.id,
+    90	        idempotency_key=idempotency_key,
+    91	        method="POST",
+    92	        path="/v1/approvals",
+    93	        request_body=payload.model_dump(),
+    94	        handler=_do_create,
+    95	    )
+    96	
+    97	
+    98	@router.get("")
+    99	async def list_approvals(
+   100	    status: str | None = None,
+   101	    limit: int | None = Query(None, ge=1, le=100),
+   102	    cursor: str | None = Query(None),
+   103	    db: AsyncSession = Depends(get_db),
+   104	    tenant: Tenant = Depends(get_current_tenant),
+   105	):
+   106	    """List approvals.
+   107	
+   108	    Backward-compatible: with no `limit` and no `cursor`, returns the legacy
+   109	    top-200 bare array. With either present, returns the cursor-paginated
+   110	    envelope {data, has_more, next_cursor}.
+   111	    """
+   112	    base = select(Approval).where(Approval.tenant_id == tenant.id)
+   113	    if status:
+   114	        base = base.where(Approval.decision == status)
+   115	
+   116	    if limit is None and cursor is None:
+   117	        # Legacy shape — don't break existing SDK clients
+   118	        stmt = base.order_by(Approval.created_at.desc(), Approval.id.desc()).limit(200)
+   119	        result = await db.execute(stmt)
+   120	        return [_serialize(a) for a in result.scalars().all()]
+   121	
+   122	    page = await paginate_stmt(db, base, Approval, limit=limit or 50, cursor=cursor)
+   123	    return {
+   124	        "data": [_serialize(a) for a in page.items],
+   125	        "has_more": page.has_more,
+   126	        "next_cursor": page.next_cursor,
+   127	    }
+   128	
+   129	
+   130	@router.get("/{action_id}/wait")
+   131	async def wait_for_decision(
+   132	    action_id: str,
+   133	    timeout: float = Query(30, ge=1, le=300, description="Seconds to wait for a decision"),
+   134	    db: AsyncSession = Depends(get_db),
+   135	    tenant: Tenant = Depends(get_current_tenant),
+   136	):
+   137	    """Long-poll for a decision. Uses Postgres LISTEN/NOTIFY for sub-100ms
+   138	    detection, with a 100ms DB fallback poll to handle missed notifications.
+   139	    """
+   140	    approval = await db.get(Approval, action_id)
+   141	    if not approval or approval.tenant_id != tenant.id:
+   142	        raise HTTPException(404, "Not found")
+   143	    if approval.decision != "pending":
+   144	        return _serialize(approval)
+   145	
+   146	    deadline = asyncio.get_event_loop().time() + timeout
+   147	    poll_interval = 0.1
+   148	    # Race: NOTIFY-wait against a poll loop. Whichever wakes first wins.
+   149	    while True:
+   150	        remaining = deadline - asyncio.get_event_loop().time()
+   132	        "checked_at": datetime.now(UTC).isoformat(),
+   133	    }
+   134	
+   135	
+   136	@router.get(".csv")
+   137	async def export_csv(
+   138	    action_id: str | None = Query(None, description="Filter to a single action_id"),
+   139	    limit: int = Query(10_000, ge=1, le=100_000),
+   140	    db: AsyncSession = Depends(get_db),
+   141	    tenant: Tenant = Depends(get_current_tenant),
+   142	):
+   143	    """Stream audit events as CSV for offline analysis / compliance reviews.
+   144	
+   145	    Customers ask for this constantly during procurement — they want to ingest
+   146	    the audit log into their own SIEM. Keep the column set stable; downstream
+   147	    parsers depend on the header row.
+   148	    """
+   149	    stmt = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+   150	    if action_id:
+   151	        stmt = stmt.where(AuditEvent.action_id == action_id)
+   152	    stmt = stmt.order_by(AuditEvent.created_at.asc()).limit(limit)
+   153	    result = await db.execute(stmt)
+   154	    rows = result.scalars().all()
+   155	
+   156	    def generate():
+   157	        buf = io.StringIO()
+   158	        writer = csv.writer(buf)
+   159	        writer.writerow(
+   160	            [
+   161	                "id",
+   162	                "action_id",
+   163	                "created_at_utc",
+   164	                "execution_result_json",
+   165	                "error",
+   166	                "prev_hash",
+   167	                "event_hash",
+   168	            ]
+   169	        )
+   170	        yield buf.getvalue()
+   171	        buf.seek(0)
+   172	        buf.truncate(0)
+   173	
+   174	        for e in rows:
+   175	            writer.writerow(
+   176	                [
+   177	                    e.id,
+   178	                    e.action_id,
+   179	                    e.created_at.isoformat() if e.created_at else "",
+   180	                    json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
+   181	                    e.error or "",
+   182	                    e.prev_hash or "",
+   183	                    e.event_hash or "",
+   184	                ]
+   185	            )
+   186	            yield buf.getvalue()
+   187	            buf.seek(0)
+   188	            buf.truncate(0)
+   189	
+   190	    return StreamingResponse(
+   191	        generate(),
+   192	        media_type="text/csv",
+   193	        headers={
+   194	            "Content-Disposition": f'attachment; filename="audit-{tenant.id}.csv"',
+   195	        },
+   196	    )
+    75	
+    76	def test_committed_openapi_operations_remain_registered():
+    77	    """Protect the checked-in downstream integration surface from removal."""
+    78	    baseline = json.loads(
+    79	        (Path(__file__).parents[1] / "docs" / "openapi.baseline.json").read_text()
+    80	    )
+    81	    current = app.openapi()
+    82	    methods = {"get", "post", "put", "patch", "delete", "options", "head"}
+    83	    for path, operations in baseline["paths"].items():
+    84	        assert path in current["paths"], path
+    85	        for method in methods.intersection(operations):
+    86	            assert method in current["paths"][path], (method, path)
+    87	
+    88	
+    89	@pytest.mark.xfail(strict=True, reason="FE-001: approval success schemas are unconstrained")
+    90	def test_openapi_types_primary_approval_responses():
+    91	    schema = app.openapi()
+    92	    for path, method in [
+    93	        ("/v1/approvals", "post"),
+    94	        ("/v1/approvals", "get"),
+    95	        ("/v1/approvals/{action_id}", "get"),
+    96	        ("/v1/approvals/{action_id}/wait", "get"),
+    97	    ]:
+    98	        response = schema["paths"][path][method]["responses"]["200"]
+    99	        assert response["content"]["application/json"]["schema"], (method, path)
+   100	
+   101	
+   102	@pytest.mark.xfail(strict=True, reason="FE-002: validator bounds/enums are absent from OpenAPI")
+   103	def test_openapi_declares_runtime_request_constraints():
+   104	    schemas = app.openapi()["components"]["schemas"]
+   105	    approval = schemas["ApprovalCreate"]["properties"]
+   106	    assert approval["timeout_seconds"].get("minimum") == 1
+   107	    assert approval["timeout_seconds"].get("maximum") == 86400
+   108	    assert set(approval["risk_level"].get("enum", [])) == {
+   109	        "low", "medium", "high", "critical"
+   110	    }
+   111	    assert set(schemas["TenantSignup"]["properties"]["mode"].get("enum", [])) == {
+   112	        "live", "test"
+   113	    }
+   114	
+   115	
+   116	@pytest.mark.xfail(strict=True, reason="FE-003: CSV download is documented as application/json")
+   117	async def test_openapi_csv_media_type_matches_runtime(contract_client):
+   118	    response = await contract_client.get("/v1/audit-events.csv")
+   119	    assert response.status_code == 200
+   120	    media_type = response.headers["content-type"].split(";", 1)[0]
+   121	    documented = app.openapi()["paths"]["/v1/audit-events.csv"]["get"]["responses"]["200"]
+   122	    assert media_type in documented["content"]
+   123	
+   124	
+   125	async def test_create_fetch_and_empty_page_response_shapes(contract_client):
+   126	    empty = await contract_client.get("/v1/approvals", params={"limit": 1})
+   127	    assert empty.status_code == 200
+   128	    assert empty.json() == {"data": [], "has_more": False, "next_cursor": None}
+   129	
+   130	    created = await contract_client.post("/v1/approvals", json=PAYLOAD)
+   131	    assert created.status_code == 200
+   132	    body = created.json()
+   133	    assert body["action_id"] == body["id"]
+   134	    assert body["status"] == body["decision"] == "pending"
+   135	    assert body["function_name"] == PAYLOAD["function_name"]
+   136	    fetched = await contract_client.get(f"/v1/approvals/{body['action_id']}")
+   137	    assert fetched.status_code == 200
+   138	    assert fetched.json() == body
+   139	
+   140	
+   141	@pytest.mark.parametrize("timeout", [None, {}, [], 1.5])
+   142	async def test_invalid_timeout_scalar_equivalence_classes(contract_client, timeout):
+   143	    response = await contract_client.post(
+   144	        "/v1/approvals", json={**PAYLOAD, "timeout_seconds": timeout}
+   145	    )
+   146	    assert response.status_code == 422
+   147	    assert response.headers["content-type"].startswith("application/json")
+   148	    assert response.json()["detail"][0]["loc"] == ["body", "timeout_seconds"]
+   149	
+   150	
+   151	@pytest.mark.parametrize("risk", ["", "HIGH", "unknown", "critical "])
+   152	async def test_invalid_risk_equivalence_classes(contract_client, risk):
+   153	    response = await contract_client.post("/v1/approvals", json={**PAYLOAD, "risk_level": risk})
+   154	    assert response.status_code == 422
+   155	    assert response.json()["detail"][0]["loc"] == ["body", "risk_level"]
+   156	
+   157	
+   158	@pytest.mark.parametrize("cursor", ["%%%", "e30", "bnVsbA", "W10", "eyJjIjoiYmFkIiwiaSI6IngifQ"])
+   159	@pytest.mark.parametrize("path", ["/v1/approvals", "/v1/audit-events"])
+   160	async def test_malformed_cursor_equivalence_classes(contract_client, path, cursor):
+   161	    response = await contract_client.get(path, params={"cursor": cursor})
+   162	    assert response.status_code == 400
+   163	    assert response.json() == {"detail": "Invalid pagination cursor"}
+   164	
+   165	
+   166	async def test_malformed_json_is_a_machine_readable_validation_error(contract_client):
+   167	    response = await contract_client.post(
+   168	        "/v1/approvals", content="{", headers={"Content-Type": "application/json"}
+   169	    )
+   170	    assert response.status_code == 422
+   171	    assert response.json()["detail"][0]["type"] == "json_invalid"
+   172	
+   173	
+   174	async def test_csv_quotes_unicode_commas_and_newlines(contract_client):
+   175	    created = await contract_client.post("/v1/approvals", json=PAYLOAD)
+   176	    assert created.status_code == 200
+   177	    payload = {
+   178	        "action_id": created.json()["action_id"],
+   179	        "execution_result": 'Completed, "reviewed"\nCaf\u00e9',
+   180	        "error": 'Synthetic, "error"\nSecond line',
+   181	    }
+   182	    emitted = await contract_client.post("/v1/audit-events", json=payload)
+   183	    assert emitted.status_code == 200
+   184	    exported = await contract_client.get("/v1/audit-events.csv")
+   185	    assert exported.status_code == 200
+   186	    rows = list(csv.DictReader(io.StringIO(exported.text)))
+   187	    assert len(rows) == 1
+   188	    assert json.loads(rows[0]["execution_result_json"]) == payload["execution_result"]
+   189	    assert rows[0]["error"] == payload["error"]

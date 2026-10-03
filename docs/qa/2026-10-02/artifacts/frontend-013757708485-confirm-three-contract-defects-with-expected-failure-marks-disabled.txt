@@ -1,0 +1,33 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+________________ test_openapi_types_primary_approval_responses _________________
+tests/test_qa_contract.py:99: in test_openapi_types_primary_approval_responses
+    assert response["content"]["application/json"]["schema"], (method, path)
+E   AssertionError: ('post', '/v1/approvals')
+E   assert {}
+______________ test_openapi_declares_runtime_request_constraints _______________
+tests/test_qa_contract.py:106: in test_openapi_declares_runtime_request_constraints
+    assert approval["timeout_seconds"].get("minimum") == 1
+E   AssertionError: assert None == 1
+E    +  where None = <built-in method get of dict object at 0x10a0e2240>('minimum')
+E    +    where <built-in method get of dict object at 0x10a0e2240> = {'type': 'integer', 'title': 'Timeout Seconds', 'default': 300}.get
+_________________ test_openapi_csv_media_type_matches_runtime __________________
+tests/test_qa_contract.py:122: in test_openapi_csv_media_type_matches_runtime
+    assert media_type in documented["content"]
+E   AssertionError: assert 'text/csv' in {'application/json': {'schema': {}}}
+----------------------------- Captured stdout call -----------------------------
+{"status_code": 200, "event": "request.completed", "level": "info", "request_id": "385e36e17f0c8843", "method": "GET", "route": "/v1/audit-events.csv", "timestamp": "2026-10-03T01:37:58.193691Z"}
+{"event": "HTTP Request: GET http://qa.invalid/v1/audit-events.csv \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-10-03T01:37:58.194971Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: GET http://qa.invalid/v1/audit-events.csv "HTTP/1.1 200 OK"
+=============================== warnings summary ===============================
+tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.venv/lib/python3.13/site-packages/sqlalchemy/sql/schema.py:4296: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return util.wrap_callable(lambda ctx: fn(), fn)  # type: ignore[call-arg, no-any-return, no-untyped-call]  # noqa: E501
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_qa_contract.py::test_openapi_types_primary_approval_responses
+FAILED tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints
+FAILED tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime
+3 failed, 22 deselected, 1 warning in 0.42s

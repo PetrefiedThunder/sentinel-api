@@ -1,0 +1,18 @@
+.....................xxxxx.........xxxxx.x                               [100%]
+=============================== warnings summary ===============================
+tests/test_qa_backend.py: 464 warnings
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.venv/lib/python3.13/site-packages/sqlalchemy/sql/schema.py:4296: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return util.wrap_callable(lambda ctx: fn(), fn)  # type: ignore[call-arg, no-any-return, no-untyped-call]  # noqa: E501
+
+tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key
+tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key
+tests/test_qa_backend.py::test_recovered_key_keeps_test_workspace_mode
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/routers/tenants.py:156: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_qa_backend.py::test_onboarding_rejects_weak_signing_configuration
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/tests/test_qa_backend.py:164: PydanticDeprecatedSince211: Accessing the 'model_fields' attribute on the instance is deprecated. Instead, you should access this attribute from the model class. Deprecated in Pydantic V2.11 to be removed in V3.0.
+    weak_default = settings.model_fields["JWT_SECRET"].default
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+31 passed, 11 xfailed, 468 warnings in 1.19s

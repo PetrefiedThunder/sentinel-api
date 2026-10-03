@@ -1,0 +1,251 @@
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+from twilio.request_validator import RequestValidator
+
+from app.config import settings
+from app.db import get_db
+from app.services.audit_log import append_audit_event
+from app.services.contacts import ACTIVE, REVOKED, set_sms_contact_status_by_phone
+from app.services.notification_attempts import update_attempt_from_provider_status
+
+router = APIRouter(prefix="/webhooks/twilio", tags=["twilio"])
+
+STOP_WORDS = {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"}
+START_WORDS = {"START", "YES", "UNSTOP"}
+
+
+async def _verified_form(request: Request):
+    form = await request.form()
+    params = {key: str(value) for key, value in form.items()}
+    signature = request.headers.get("X-Twilio-Signature", "")
+    if settings.TWILIO_AUTH_TOKEN:
+        validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+        validation_url = f"{settings.PUBLIC_API_URL.rstrip('/')}{request.url.path}"
+        if request.url.query:
+            validation_url = f"{validation_url}?{request.url.query}"
+        if not validator.validate(validation_url, params, signature):
+            raise HTTPException(401, "Invalid Twilio signature")
+    return params
+
+
+@router.post("/status")
+async def status_callback(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    params = await _verified_form(request)
+    message_sid = params.get("MessageSid")
+    message_status = params.get("MessageStatus")
+    if not message_sid or not message_status:
+        raise HTTPException(400, "Missing MessageSid or MessageStatus")
+    attempt, changed = await update_attempt_from_provider_status(
+        db,
+        message_sid,
+        message_status,
+        params.get("ErrorCode"),
+        params.get("ErrorMessage"),
+    )
+    if attempt and changed:
+        await append_audit_event(
+            db,
+            attempt.tenant_id,
+            attempt.action_id,
+            f"notification:sms:{message_status}",
+            params.get("ErrorMessage") or params.get("ErrorCode"),
+        )
+    return {"ok": True}
+
+
+@router.post("/inbound")
+async def inbound_message(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    params = await _verified_form(request)
+    sender = params.get("From")
+    if not sender:
+        raise HTTPException(400, "Missing From")
+    keyword = (params.get("OptOutType") or params.get("Body") or "").strip().upper()
+    status = None
+    action = None
+    if keyword in STOP_WORDS:
+        status = REVOKED
+        action = "opt_out"
+    elif keyword in START_WORDS:
+        status = ACTIVE
+        action = "opt_in"
+    if status:
+        contacts = await set_sms_contact_status_by_phone(db, sender, status, "twilio_inbound")
+        for contact in contacts:
+            await append_audit_event(
+                db,
+                contact.tenant_id,
+                None,
+                f"notification:sms:{action}",
+                None,
+            )
+    return Response(content="", media_type="text/plain")
+from sqlalchemy import select
+from test_support import TENANT_ID, client_for, make_sqlite_session, run
+from twilio.request_validator import RequestValidator
+
+from app.config import settings
+from app.models import Approval, ApproverContact, AuditEvent, NotificationAttempt
+from app.services.contacts import destination_hash, normalize_phone_number
+
+
+def _signature(url: str, params: dict[str, str], token: str) -> str:
+    return RequestValidator(token).compute_signature(url, params)
+
+
+def test_twilio_status_webhook_rejects_invalid_signature(monkeypatch):
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+        with client_for(session, tenant) as client:
+            response = client.post(
+                "/webhooks/twilio/status",
+                data={"MessageSid": "SM123", "MessageStatus": "delivered"},
+                headers={"X-Twilio-Signature": "bad"},
+            )
+
+        assert response.status_code == 401
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_twilio_status_webhook_updates_attempt_once(monkeypatch):
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+        approval = Approval(
+            id="act_123",
+            tenant_id=TENANT_ID,
+            function_name="transfer_funds",
+            arguments={"amount": 1000},
+            risk_level="high",
+            approvers=["sms:+15551234567"],
+            timeout_seconds=300,
+        )
+        attempt = NotificationAttempt(
+            tenant_id=TENANT_ID,
+            action_id="act_123",
+            channel="sms",
+            destination_hash=destination_hash("+15551234567"),
+            destination_last4="4567",
+            provider="twilio",
+            provider_message_sid="SM123",
+            provider_status="accepted",
+        )
+        session.add_all([approval, attempt])
+        run(session.commit())
+
+        params = {
+            "MessageSid": "SM123",
+            "MessageStatus": "undelivered",
+            "ErrorCode": "30034",
+            "ErrorMessage": "A2P registration incomplete",
+        }
+        with client_for(session, tenant) as client:
+            signature = _signature("http://testserver/webhooks/twilio/status", params, "secret")
+            first = client.post(
+                "/webhooks/twilio/status",
+                data=params,
+                headers={"X-Twilio-Signature": signature},
+            )
+            second = client.post(
+                "/webhooks/twilio/status",
+                data=params,
+                headers={"X-Twilio-Signature": signature},
+            )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        run(session.refresh(attempt))
+        assert attempt.provider_status == "undelivered"
+        assert attempt.error_code == "30034"
+
+        events = run(session.execute(select(AuditEvent)))
+        assert [event.execution_result for event in events.scalars().all()] == [
+            "notification:sms:undelivered"
+        ]
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_twilio_inbound_stop_revokes_and_start_reactivates_contact(monkeypatch):
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+        phone = normalize_phone_number("+15551234567")
+        contact = ApproverContact(
+            tenant_id=TENANT_ID,
+            channel="sms",
+            destination=phone,
+            destination_hash=destination_hash(phone),
+            destination_last4=phone[-4:],
+            display_name="Chris",
+            consent_status="active",
+            consent_source="dashboard",
+        )
+        session.add(contact)
+        run(session.commit())
+
+        stop = {"From": "+15551234567", "Body": "STOP", "OptOutType": "STOP"}
+        start = {"From": "+15551234567", "Body": "START", "OptOutType": "START"}
+        with client_for(session, tenant) as client:
+            stop_signature = _signature("http://testserver/webhooks/twilio/inbound", stop, "secret")
+            stop_response = client.post(
+                "/webhooks/twilio/inbound",
+                data=stop,
+                headers={"X-Twilio-Signature": stop_signature},
+            )
+        assert stop_response.status_code == 200
+        run(session.refresh(contact))
+        assert contact.consent_status == "revoked"
+        assert contact.revoked_at is not None
+
+        with client_for(session, tenant) as client:
+            blocked = client.post(
+                "/v1/approvals",
+                json={
+                    "function_name": "transfer_funds",
+                    "arguments": {"amount": 1000},
+                    "risk_level": "high",
+                    "approvers": ["sms:+15551234567"],
+                    "timeout_seconds": 300,
+                },
+            )
+            start_signature = _signature("http://testserver/webhooks/twilio/inbound", start, "secret")
+            start_response = client.post(
+                "/webhooks/twilio/inbound",
+                data=start,
+                headers={"X-Twilio-Signature": start_signature},
+            )
+
+        assert blocked.status_code == 400
+        assert start_response.status_code == 200
+        run(session.refresh(contact))
+        assert contact.consent_status == "active"
+        assert contact.revoked_at is None
+    finally:
+        run(session.close())
+        run(engine.dispose())
+tests/test_twilio_webhooks.py:10:def _signature(url: str, params: dict[str, str], token: str) -> str:
+tests/test_twilio_webhooks.py:11:    return RequestValidator(token).compute_signature(url, params)
+tests/test_twilio_webhooks.py:14:def test_twilio_status_webhook_rejects_invalid_signature(monkeypatch):
+tests/test_twilio_webhooks.py:17:        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_twilio_webhooks.py:35:        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_twilio_webhooks.py:66:            signature = _signature("http://testserver/webhooks/twilio/status", params, "secret")
+tests/test_twilio_webhooks.py:70:                headers={"X-Twilio-Signature": signature},
+tests/test_twilio_webhooks.py:75:                headers={"X-Twilio-Signature": signature},
+tests/test_twilio_webhooks.py:96:        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_twilio_webhooks.py:115:            stop_signature = _signature("http://testserver/webhooks/twilio/inbound", stop, "secret")
+tests/test_twilio_webhooks.py:119:                headers={"X-Twilio-Signature": stop_signature},
+tests/test_twilio_webhooks.py:137:            start_signature = _signature("http://testserver/webhooks/twilio/inbound", start, "secret")
+tests/test_twilio_webhooks.py:141:                headers={"X-Twilio-Signature": start_signature},

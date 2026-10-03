@@ -1,0 +1,229 @@
+     1	# Contributing to Sentinel API
+     2	
+     3	## Setup
+     4	
+     5	```bash
+     6	git clone https://github.com/PetrefiedThunder/sentinel-api
+     7	cd sentinel-api
+     8	uv venv && source .venv/bin/activate
+     9	uv sync
+    10	pre-commit install
+    11	```
+    12	
+    13	You need Postgres ≥ 15 and Redis ≥ 6 running locally:
+    14	
+    15	```bash
+    16	createdb sentinel
+    17	export DATABASE_URL="postgresql+asyncpg://localhost/sentinel"
+    18	export REDIS_URL="redis://localhost:6379/0"
+    19	export JWT_SECRET="$(openssl rand -hex 32)"
+    20	
+    21	alembic upgrade head
+    22	uvicorn app.main:app --reload
+    23	```
+    24	
+    25	## Running tests
+    26	
+    27	```bash
+    28	pytest -q                                  # all tests
+    29	pytest tests/test_approvals.py -v          # one file
+    30	pytest -k "rejection"                      # by name pattern
+    31	```
+    32	
+    33	## Migrations
+    34	
+    35	```bash
+    36	# create
+    37	alembic revision -m "your change"          # edits the file by hand
+    38	# apply
+    39	alembic upgrade head
+    40	# round-trip test before pushing
+    41	alembic downgrade -1 && alembic upgrade head
+    42	```
+    43	
+    44	**Migration rules:**
+    45	
+    46	- Sequential numeric prefix: `007_<short_name>.py`
+    47	- `revision = "007"` and `down_revision = "006"` — strings must match exactly
+    48	- One logical change per migration
+    49	- All migrations must be reversible (`downgrade()` implemented)
+    50	- Test round-trip locally before pushing
+    51	
+    52	## Pull requests
+    53	
+    54	1. Open an issue first if it's a behavior change
+    55	2. Small, focused PRs
+    56	3. Add tests
+    57	4. `pytest` + `ruff check .` must pass (pre-commit enforces this)
+    58	5. Document any new env var in README.md
+    59	6. If you add a migration, link to it in the PR description
+    60	
+    61	## Release process
+    62	
+    63	The API is continuously deployed from `main`. There is no version tag — every merge to `main` is the new production version. If you need a hotfix, push to `main` and watch Railway auto-deploy.
+    64	
+    65	## Security
+    66	
+    67	See [`SECURITY.md`](SECURITY.md). Never file a public issue for a vulnerability.
+    68	
+    69	## Code style
+    70	
+    71	- Python 3.11+
+    72	- Type hints required on all public APIs (`mypy` in pre-commit)
+    73	- `ruff` for lint + format (config in `pyproject.toml`)
+    74	- Async-first (`async def` for any DB-touching code)
+    75	
+    76	## Code of conduct
+    77	
+    78	Be excellent. Harassment, discrimination, or bigotry → removed from the project.
+{
+  "started_utc": "2026-10-03T01:40:41.575Z",
+  "ended_utc": "2026-10-03T01:40:45.527Z",
+  "browsers": [
+    {
+      "name": "chromium",
+      "browserVersion": "153.0.8010.12",
+      "httpStatus": 200,
+      "title": "Sentinel API - Swagger UI",
+      "operationCount": 29,
+      "errors": [],
+      "mobileOverflow": {
+        "width": 375,
+        "content": 375
+      },
+      "keyboardExpandsOperation": true,
+      "loadingText": "",
+      "errorText": "Failed to load API definition.\nErrors\nHide\n \nFetch error\nService Unavailable /openapi.json\n ",
+      "emptyText": "Sentinel API\n QA empty state \nOAS 3.1\n/openapi.json\nNo operations defined in spec!",
+      "errorAlerts": 0,
+      "focusOutline": {
+        "style": "auto",
+        "width": "3px"
+      },
+      "axeViolations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 46
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1
+        },
+        {
+          "id": "html-has-lang",
+          "impact": "serious",
+          "nodes": 1
+        },
+        {
+          "id": "nested-interactive",
+          "impact": "serious",
+          "nodes": 29
+        },
+        {
+          "id": "region",
+          "impact": "moderate",
+          "nodes": 1
+        },
+        {
+          "id": "target-size",
+          "impact": "serious",
+          "nodes": 29
+        }
+      ],
+      "axeIncomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": 29
+        }
+      ]
+    },
+    {
+      "name": "firefox",
+      "browserVersion": "155.0",
+      "httpStatus": 200,
+      "title": "Sentinel API - Swagger UI",
+      "operationCount": 29,
+      "errors": []
+    },
+    {
+      "name": "webkit",
+      "browserVersion": "26.6",
+      "httpStatus": 200,
+      "title": "Sentinel API - Swagger UI",
+      "operationCount": 29,
+      "errors": []
+    }
+  ],
+  "playwright": "1.63.0",
+  "axe-core": "4.13.0",
+  "swagger-ui-dist": "5.33.1"
+}
+Using CPython 3.13.14
+Creating virtual environment at: /private/tmp/sentinel-qa-ux-20261002/contributor/.venv
+Resolved 63 packages in 590ms
+   Building sentinel-api @ file:///private/tmp/sentinel-qa-ux-20261002/contributor
+Downloading twilio (2.4MiB)
+Downloading pydantic-core (1.8MiB)
+Downloading uvloop (1.3MiB)
+ Downloaded uvloop
+ Downloaded pydantic-core
+ Downloaded twilio
+   Building sqlalchemy==2.1.3
+      Built sentinel-api @ file:///private/tmp/sentinel-qa-ux-20261002/contributor
+      Built sqlalchemy==2.1.3
+Prepared 50 packages in 10.33s
+Installed 50 packages in 47ms
+ + aiohappyeyeballs==2.7.1
+ + aiohttp==3.14.3
+ + aiohttp-retry==2.9.1
+ + aiosignal==1.4.0
+ + alembic==1.20.0
+ + annotated-doc==0.0.5
+ + annotated-types==0.8.0
+ + anyio==4.15.1
+ + asn1crypto==1.5.1
+ + asyncpg==0.31.0
+ + attrs==26.1.0
+ + certifi==2026.7.22
+ + charset-normalizer==3.5.2
+ + click==8.5.0
+ + fastapi==0.142.2
+ + frozenlist==1.8.0
+ + greenlet==3.5.6
+ + h11==0.16.0
+ + httpcore==1.0.9
+ + httptools==0.8.0
+ + httpx==0.28.1
+ + idna==3.20
+ + mako==1.4.3
+ + markupsafe==3.0.4
+ + multidict==6.9.1
+ + opentelemetry-api==1.45.0
+ + propcache==0.5.4
+ + pydantic==2.13.5
+ + pydantic-core==2.46.5
+ + pydantic-settings==2.15.0
+ + pyjwt==2.15.1
+ + python-dotenv==1.2.4
+ + python-multipart==0.0.32
+ + pyyaml==6.0.3
+ + redis==8.1.0
+ + requests==2.34.2
+ + sentinel-api==0.1.0 (from file:///private/tmp/sentinel-qa-ux-20261002/contributor)
+ + sentry-sdk==2.71.0
+ + sqlalchemy==2.1.3
+ + starlette==1.7.0
+ + structlog==26.1.0
+ + twilio==9.11.2
+ + typing-extensions==4.16.0
+ + typing-inspection==0.4.4
+ + urllib3==2.8.0
+ + uvicorn==0.54.0
+ + uvloop==0.23.0
+ + watchfiles==1.3.0
+ + websockets==17.1
+ + yarl==1.25.1
+{'pytest': False, 'ruff': False, 'pre_commit': False}
+documented test file exists: False

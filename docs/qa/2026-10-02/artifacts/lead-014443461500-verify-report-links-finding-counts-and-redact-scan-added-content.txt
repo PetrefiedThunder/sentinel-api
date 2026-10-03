@@ -1,0 +1,4 @@
+Missing markdown artifact links: [('docs/qa/2026-10-02/SESSION-LOG.md', '"recover", "synthetic-tenant", 60'), ('docs/qa/2026-10-02/SESSION-LOG.md', 'created, "recover"'), ('docs/qa/2026-10-02/SESSION-LOG.md', 'endpoint, "approval.approved", SimpleNamespace(id="qa-action"'), ('docs/qa/2026-10-02/SESSION-LOG.md', 'None, 10, FakeDB(')]
+Traceback (most recent call last):
+  File "<stdin>", line 11, in <module>
+AssertionError

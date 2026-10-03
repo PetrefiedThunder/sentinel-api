@@ -1,0 +1,763 @@
+     1	from fastapi import APIRouter, Depends, HTTPException
+     2	from sqlalchemy.ext.asyncio import AsyncSession
+     3	
+     4	from app.auth import get_current_tenant
+     5	from app.db import get_db
+     6	from app.models import Tenant
+     7	from app.schemas import ApproverContactCreate
+     8	from app.services.contacts import (
+     9	    create_or_reactivate_sms_contact,
+    10	    list_contacts,
+    11	    revoke_contact,
+    12	    serialize_contact,
+    13	)
+    14	
+    15	router = APIRouter()
+    16	
+    17	
+    18	@router.post("")
+    19	async def create_contact(
+    20	    payload: ApproverContactCreate,
+    21	    db: AsyncSession = Depends(get_db),
+    22	    tenant: Tenant = Depends(get_current_tenant),
+    23	):
+    24	    if not payload.consent_attested:
+    25	        raise HTTPException(400, "SMS consent must be explicitly attested")
+    26	    contact = await create_or_reactivate_sms_contact(
+    27	        db,
+    28	        tenant.id,
+    29	        payload.phone_number,
+    30	        payload.display_name,
+    31	        payload.consent_source,
+    32	        payload.consent_note,
+    33	    )
+    34	    return serialize_contact(contact)
+    35	
+    36	
+    37	@router.get("")
+    38	async def list_approver_contacts(
+    39	    db: AsyncSession = Depends(get_db),
+    40	    tenant: Tenant = Depends(get_current_tenant),
+    41	):
+    42	    return [serialize_contact(contact) for contact in await list_contacts(db, tenant.id)]
+    43	
+    44	
+    45	@router.delete("/{contact_id}")
+    46	async def delete_contact(
+    47	    contact_id: str,
+    48	    db: AsyncSession = Depends(get_db),
+    49	    tenant: Tenant = Depends(get_current_tenant),
+    50	):
+    51	    contact = await revoke_contact(db, tenant.id, contact_id)
+    52	    if not contact:
+    53	        raise HTTPException(404, "Not found")
+    54	    return serialize_contact(contact)
+     1	"""Stripe billing — Checkout Session generation + webhook handling.
+     2	
+     3	Scaffolding only — no quota enforcement yet. The MVP gives tenants a way
+     4	to upgrade themselves to Pro and reflects the resulting `tenant.plan`
+     5	state. Quota enforcement on free-tier hits comes later, when we know what
+     6	the right cap is from real usage.
+     7	
+     8	Disabled by default — until STRIPE_SECRET_KEY is set on Railway, both
+     9	endpoints return 503.
+    10	"""
+    11	from __future__ import annotations
+    12	
+    13	import logging
+    14	from datetime import datetime
+    15	
+    16	import httpx
+    17	from fastapi import APIRouter, Depends, Header, HTTPException, Request
+    18	from pydantic import BaseModel
+    19	from sqlalchemy import select
+    20	from sqlalchemy.ext.asyncio import AsyncSession
+    21	
+    22	from app.auth import get_current_tenant
+    23	from app.config import settings
+    24	from app.db import get_db
+    25	from app.models import Tenant
+    26	
+    27	log = logging.getLogger(__name__)
+    28	router = APIRouter()
+    29	
+    30	STRIPE_API = "https://api.stripe.com/v1"
+    31	
+    32	
+    33	def _stripe_enabled() -> None:
+    34	    if not settings.STRIPE_SECRET_KEY:
+    35	        raise HTTPException(
+    36	            503, "Billing is disabled. STRIPE_SECRET_KEY not configured."
+    37	        )
+    38	
+    39	
+    40	async def _stripe_post(path: str, form: dict) -> dict:
+    41	    async with httpx.AsyncClient(timeout=15.0) as client:
+    42	        r = await client.post(
+    43	            f"{STRIPE_API}{path}",
+    44	            auth=(settings.STRIPE_SECRET_KEY, ""),
+    45	            data=form,
+    46	        )
+    47	    if r.status_code >= 400:
+    48	        try:
+    49	            detail = r.json().get("error", {}).get("message", r.text[:300])
+    50	        except Exception:
+    51	            detail = r.text[:300]
+    52	        raise HTTPException(r.status_code, f"Stripe API error: {detail}")
+    53	    return r.json()
+    54	
+    55	
+    56	# ── Checkout Session ─────────────────────────────────────────────────
+    57	class CheckoutRequest(BaseModel):
+    58	    plan: str = "pro"  # currently only "pro" is supported
+    59	
+    60	
+    61	@router.post("/checkout")
+    62	async def create_checkout(
+    63	    payload: CheckoutRequest,
+    64	    db: AsyncSession = Depends(get_db),
+    65	    tenant: Tenant = Depends(get_current_tenant),
+    66	):
+    67	    """Generate a Stripe Checkout Session URL the user can click to subscribe."""
+    68	    _stripe_enabled()
+    69	    if payload.plan != "pro":
+    70	        raise HTTPException(400, "Only 'pro' plan is available")
+    71	    if not settings.STRIPE_PRICE_PRO:
+    72	        raise HTTPException(503, "STRIPE_PRICE_PRO not configured")
+    73	
+    74	    # Reuse the tenant's Stripe Customer if we have one — otherwise let
+    75	    # Checkout create one via the customer_email field.
+    76	    form: dict = {
+    77	        "mode": "subscription",
+    78	        "line_items[0][price]": settings.STRIPE_PRICE_PRO,
+    79	        "line_items[0][quantity]": 1,
+    80	        "success_url": settings.STRIPE_SUCCESS_URL,
+    81	        "cancel_url": settings.STRIPE_CANCEL_URL,
+    82	        "client_reference_id": tenant.id,
+    83	        "metadata[tenant_id]": tenant.id,
+    84	        "allow_promotion_codes": "true",
+    85	    }
+    86	    if tenant.stripe_customer_id:
+    87	        form["customer"] = tenant.stripe_customer_id
+    88	    else:
+    89	        form["customer_email"] = tenant.email
+    90	
+    91	    session = await _stripe_post("/checkout/sessions", form)
+    92	    return {"url": session.get("url"), "id": session.get("id")}
+    93	
+    94	
+    95	# ── Stripe webhook (subscription events) ─────────────────────────────
+    96	@router.post("/webhook", include_in_schema=False)
+    97	async def stripe_webhook(
+    98	    request: Request,
+    99	    stripe_signature: str | None = Header(default=None, alias="Stripe-Signature"),
+   100	    db: AsyncSession = Depends(get_db),
+   101	):
+   102	    """Receive subscription lifecycle events from Stripe. Signature-verified
+   103	    via the STRIPE_WEBHOOK_SECRET. Updates tenant.plan on success."""
+   104	    _stripe_enabled()
+   105	    if not settings.STRIPE_WEBHOOK_SECRET:
+   106	        raise HTTPException(503, "STRIPE_WEBHOOK_SECRET not configured")
+   107	    if not stripe_signature:
+   108	        raise HTTPException(401, "Missing Stripe-Signature header")
+   109	
+   110	    raw_body = await request.body()
+   111	    if not _verify_stripe_signature(
+   112	        raw_body, stripe_signature, settings.STRIPE_WEBHOOK_SECRET
+   113	    ):
+   114	        raise HTTPException(401, "Invalid Stripe signature")
+   115	
+   116	    try:
+   117	        event = httpx.Response(200, content=raw_body).json()
+   118	    except Exception:
+   119	        raise HTTPException(400, "Malformed JSON body") from None
+   120	
+   121	    event_type = event.get("type", "")
+   122	    obj = (event.get("data") or {}).get("object") or {}
+   123	    tenant_id = (
+   124	        obj.get("client_reference_id")
+   125	        or (obj.get("metadata") or {}).get("tenant_id")
+   126	        or None
+   127	    )
+   128	
+   129	    if not tenant_id:
+   130	        # try to find by stripe_customer_id (subscription.updated events
+   131	        # don't always carry client_reference_id)
+   132	        customer_id = obj.get("customer")
+   133	        if customer_id:
+   134	            r = await db.execute(
+   135	                select(Tenant).where(Tenant.stripe_customer_id == customer_id)
+   136	            )
+   137	            tenant = r.scalar_one_or_none()
+   138	            if tenant:
+   139	                tenant_id = tenant.id
+   140	
+   141	    if not tenant_id:
+   142	        log.warning("Stripe webhook %s — no tenant_id resolvable", event_type)
+   143	        return {"ok": True, "ignored": True}
+   144	
+   145	    tenant = await db.get(Tenant, tenant_id)
+   146	    if not tenant:
+   147	        log.warning("Stripe webhook %s — tenant %s not found", event_type, tenant_id)
+   148	        return {"ok": True, "ignored": True}
+   149	
+   150	    now = datetime.utcnow()
+   151	
+   152	    if event_type in ("checkout.session.completed", "customer.subscription.created"):
+   153	        tenant.plan = "pro"
+   154	        if obj.get("customer"):
+   155	            tenant.stripe_customer_id = obj["customer"]
+   156	        if obj.get("subscription"):
+   157	            tenant.stripe_subscription_id = obj["subscription"]
+   158	        elif obj.get("id") and event_type == "customer.subscription.created":
+   159	            tenant.stripe_subscription_id = obj["id"]
+   160	        tenant.plan_updated_at = now
+   161	
+   162	    elif event_type == "customer.subscription.updated":
+   163	        status = obj.get("status")
+   164	        if status in ("active", "trialing"):
+   165	            tenant.plan = "pro"
+   166	        elif status in ("past_due", "unpaid", "incomplete"):
+   167	            # Don't downgrade automatically — let dunning handle it.
+   168	            pass
+   169	        elif status in ("canceled", "incomplete_expired"):
+   170	            tenant.plan = "free"
+   171	        tenant.plan_updated_at = now
+   172	
+   173	    elif event_type == "customer.subscription.deleted":
+   174	        tenant.plan = "free"
+   175	        tenant.stripe_subscription_id = None
+   176	        tenant.plan_updated_at = now
+   177	
+   178	    await db.commit()
+   179	    return {"ok": True, "event": event_type, "tenant_id": tenant.id, "plan": tenant.plan}
+   180	
+   181	
+   182	def _verify_stripe_signature(
+   183	    raw_body: bytes, sig_header: str, secret: str, tolerance: int = 300
+   184	) -> bool:
+   185	    """Verify Stripe's v1 webhook signature. Format: 't=TIMESTAMP,v1=SIG[,...]'.
+   186	
+   187	    Manual implementation so we don't take a hard dep on the stripe SDK.
+   188	    Standard pattern; matches stripe.Webhook.construct_event().
+   189	    """
+   190	    import hashlib
+   191	    import hmac
+   192	    import time as _time
+   193	
+   194	    try:
+   195	        parts = dict(p.split("=", 1) for p in sig_header.split(","))
+   196	    except ValueError:
+   197	        return False
+   198	    ts = parts.get("t")
+   199	    v1 = parts.get("v1")
+   200	    if not ts or not v1:
+   201	        return False
+   202	
+   203	    # tolerance to mitigate replay
+   204	    try:
+   205	        if abs(_time.time() - int(ts)) > tolerance:
+   206	            return False
+   207	    except ValueError:
+   208	        return False
+   209	
+   210	    signed_payload = f"{ts}.".encode() + raw_body
+   211	    expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+   212	    return hmac.compare_digest(expected, v1)
+   213	
+   214	
+   215	# ── GET current plan ─────────────────────────────────────────────────
+   216	@router.get("/me")
+   217	async def get_billing_info(
+   218	    tenant: Tenant = Depends(get_current_tenant),
+   219	):
+   220	    """Current billing state. Always returns something, even if Stripe is disabled."""
+   221	    return {
+   222	        "plan": tenant.plan,
+   223	        "stripe_customer_id": tenant.stripe_customer_id,
+   224	        "stripe_subscription_id": tenant.stripe_subscription_id,
+   225	        "plan_updated_at": tenant.plan_updated_at,
+   226	        "billing_enabled": bool(settings.STRIPE_SECRET_KEY),
+   227	    }
+     1	"""Status-page uptime history — probe ingest + public daily aggregates.
+     2	
+     3	POST /probe is gated by the admin bearer token (the external prober is
+     4	trusted infrastructure, not a tenant). GET /history is public so the
+     5	/status page can render real 30/90-day uptime without auth.
+     6	"""
+     7	from __future__ import annotations
+     8	
+     9	from datetime import datetime, timedelta
+    10	
+    11	from fastapi import APIRouter, Depends, Query
+    12	from pydantic import BaseModel
+    13	from sqlalchemy import select
+    14	from sqlalchemy.ext.asyncio import AsyncSession
+    15	
+    16	from app.db import get_db
+    17	from app.models import UptimeProbe
+    18	from app.routers.admin import _check_admin
+    19	
+    20	router = APIRouter()
+    21	
+    22	
+    23	class ProbeIn(BaseModel):
+    24	    region: str
+    25	    target: str
+    26	    ok: bool
+    27	    status_code: int | None = None
+    28	    latency_ms: int | None = None
+    29	
+    30	
+    31	@router.post("/probe", dependencies=[Depends(_check_admin)], include_in_schema=False)
+    32	async def ingest_probe(body: ProbeIn, db: AsyncSession = Depends(get_db)) -> dict:
+    33	    db.add(
+    34	        UptimeProbe(
+    35	            region=body.region,
+    36	            target=body.target,
+    37	            ok=body.ok,
+    38	            status_code=body.status_code,
+    39	            latency_ms=body.latency_ms,
+    40	        )
+    41	    )
+    42	    await db.commit()
+    43	    return {"ok": True}
+    44	
+    45	
+    46	@router.get("/history")
+    47	async def history(
+    48	    days: int = Query(default=30, ge=1, le=92),
+    49	    db: AsyncSession = Depends(get_db),
+    50	) -> list[dict]:
+    51	    """Daily uptime aggregates for the last `days` days, ascending by date.
+    52	
+    53	    Aggregation happens in Python — probe volume is tiny (a few per minute
+    54	    at most) and this sidesteps SQLite/Postgres date-trunc dialect drift.
+    55	    """
+    56	    cutoff = datetime.utcnow() - timedelta(days=days)
+    57	    rows = (
+    58	        await db.execute(select(UptimeProbe).where(UptimeProbe.created_at >= cutoff))
+    59	    ).scalars()
+    60	
+    61	    buckets: dict[str, dict] = {}
+    62	    for probe in rows:
+    63	        day = probe.created_at.strftime("%Y-%m-%d")
+    64	        bucket = buckets.setdefault(day, {"probes": 0, "ok": 0})
+    65	        bucket["probes"] += 1
+    66	        if probe.ok:
+    67	            bucket["ok"] += 1
+    68	
+    69	    return [
+    70	        {
+    71	            "date": day,
+    72	            "probes": bucket["probes"],
+    73	            "ok": bucket["ok"],
+    74	            "uptime_pct": round(bucket["ok"] / bucket["probes"] * 100, 3),
+    75	        }
+    76	        for day, bucket in sorted(buckets.items())
+    77	    ]
+     1	"""Coverage for app/routers/admin.py — token gate, stats, purge-unverified.
+     2	
+     3	Admin endpoints use _check_admin (header bearer token), NOT get_current_tenant,
+     4	so we must set settings.ADMIN_TOKEN and pass Authorization headers. get_db is
+     5	still overridden by client_for so the in-memory session is used.
+     6	"""
+     7	from datetime import datetime, timedelta
+     8	
+     9	import pytest
+    10	from test_support import client_for, make_sqlite_session, run
+    11	
+    12	from app.config import settings
+    13	from app.models import ApiKey, Approval, AuditEvent, Tenant
+    14	
+    15	
+    16	@pytest.fixture(autouse=True)
+    17	def _admin_token():
+    18	    saved = settings.ADMIN_TOKEN
+    19	    try:
+    20	        yield
+    21	    finally:
+    22	        settings.ADMIN_TOKEN = saved
+    23	
+    24	
+    25	def test_stats_503_when_admin_disabled():
+    26	    engine, session, tenant = run(make_sqlite_session())
+    27	    settings.ADMIN_TOKEN = ""
+    28	    try:
+    29	        with client_for(session, tenant) as client:
+    30	            resp = client.get("/v1/admin/stats")
+    31	        assert resp.status_code == 503
+    32	    finally:
+    33	        run(session.close())
+    34	        run(engine.dispose())
+    35	
+    36	
+    37	def test_stats_401_without_bearer():
+    38	    engine, session, tenant = run(make_sqlite_session())
+    39	    settings.ADMIN_TOKEN = "secret-admin"
+    40	    try:
+    41	        with client_for(session, tenant) as client:
+    42	            resp = client.get("/v1/admin/stats")
+    43	        assert resp.status_code == 401
+    44	    finally:
+    45	        run(session.close())
+    46	        run(engine.dispose())
+    47	
+    48	
+    49	def test_stats_403_with_wrong_token():
+    50	    engine, session, tenant = run(make_sqlite_session())
+    51	    settings.ADMIN_TOKEN = "secret-admin"
+    52	    try:
+    53	        with client_for(session, tenant) as client:
+    54	            resp = client.get(
+    55	                "/v1/admin/stats", headers={"Authorization": "Bearer [REDACTED]"}
+    56	            )
+    57	        assert resp.status_code == 403
+    58	    finally:
+    59	        run(session.close())
+    60	        run(engine.dispose())
+    61	
+    62	
+    63	def test_stats_returns_counts():
+    64	    engine, session, tenant = run(make_sqlite_session())
+    65	    settings.ADMIN_TOKEN = "secret-admin"
+    66	    # verified tenant + one approval
+    67	    tenant.email_verified_at = datetime.utcnow()
+    68	    session.add(Approval(tenant_id=tenant.id, function_name="f"))
+    69	    run(session.commit())
+    70	    try:
+    71	        with client_for(session, tenant) as client:
+    72	            resp = client.get(
+    73	                "/v1/admin/stats", headers={"Authorization": "Bearer [REDACTED]"}
+    74	            )
+    75	        assert resp.status_code == 200
+    76	        body = resp.json()
+    77	        assert body["tenants_total"] == 1
+    78	        assert body["tenants_verified"] == 1
+    79	        assert body["tenants_unverified"] == 0
+    80	        assert body["approvals_total"] == 1
+    81	    finally:
+    82	        run(session.close())
+    83	        run(engine.dispose())
+    84	
+    85	
+    86	def test_purge_rejects_bad_window():
+    87	    engine, session, tenant = run(make_sqlite_session())
+    88	    settings.ADMIN_TOKEN = "secret-admin"
+    89	    try:
+    90	        with client_for(session, tenant) as client:
+    91	            resp = client.post(
+    92	                "/v1/admin/purge-unverified?older_than_days=0",
+    93	                headers={"Authorization": "Bearer [REDACTED]"},
+    94	            )
+    95	        assert resp.status_code == 400
+    96	    finally:
+    97	        run(session.close())
+    98	        run(engine.dispose())
+    99	
+   100	
+   101	def test_purge_dry_run_reports_targets():
+   102	    engine, session, tenant = run(make_sqlite_session())
+   103	    settings.ADMIN_TOKEN = "secret-admin"
+   104	    # add an old unverified tenant
+   105	    old = Tenant(
+   106	        id="ten_old",
+   107	        name="Old",
+   108	        email="old@acme.io",
+   109	        created_at=datetime.utcnow() - timedelta(days=60),
+   110	    )
+   111	    session.add(old)
+   112	    run(session.commit())
+   113	    try:
+   114	        with client_for(session, tenant) as client:
+   115	            resp = client.post(
+   116	                "/v1/admin/purge-unverified?older_than_days=30",
+   117	                headers={"Authorization": "Bearer [REDACTED]"},
+   118	            )
+   119	        assert resp.status_code == 200
+   120	        body = resp.json()
+   121	        assert body["dry_run"] is True
+   122	        assert body["would_delete"] == 1
+   123	        assert body["sample"][0]["email"] == "old@acme.io"
+   124	    finally:
+   125	        run(session.close())
+   126	        run(engine.dispose())
+   127	
+   128	
+   129	def test_purge_actually_deletes_with_cascade():
+   130	    engine, session, tenant = run(make_sqlite_session())
+   131	    settings.ADMIN_TOKEN = "secret-admin"
+   132	    old = Tenant(
+   133	        id="ten_old",
+   134	        name="Old",
+   135	        email="old@acme.io",
+   136	        created_at=datetime.utcnow() - timedelta(days=60),
+   137	    )
+   138	    session.add(old)
+   139	    run(session.flush())
+   140	    session.add(ApiKey(tenant_id=old.id, key_hash="h", prefix="sk", name="default"))
+   141	    appr = Approval(tenant_id=old.id, function_name="f")
+   142	    session.add(appr)
+   143	    run(session.flush())
+   144	    session.add(
+   145	        AuditEvent(tenant_id=old.id, action_id=appr.id, event_hash="abc")
+   146	    )
+   147	    run(session.commit())
+   148	    try:
+   149	        with client_for(session, tenant) as client:
+   150	            resp = client.post(
+   151	                "/v1/admin/purge-unverified?older_than_days=30&dry_run=false",
+   152	                headers={"Authorization": "Bearer [REDACTED]"},
+   153	            )
+   154	        assert resp.status_code == 200
+   155	        body = resp.json()
+   156	        assert body["dry_run"] is False
+   157	        assert body["deleted_tenants"] == 1
+   158	        assert body["deleted_api_keys"] == 1
+   159	        assert body["deleted_approvals"] == 1
+   160	        assert body["deleted_audit_events"] == 1
+   161	        # the active test tenant must survive
+   162	        assert run(session.get(Tenant, tenant.id)) is not None
+   163	        assert run(session.get(Tenant, "ten_old")) is None
+   164	    finally:
+   165	        run(session.close())
+   166	        run(engine.dispose())
+     1	from sqlalchemy import update
+     2	from test_support import TENANT_ID, client_for, make_sqlite_session, run
+     3	
+     4	from app.models import AuditEvent
+     5	from app.services.audit_log import append_audit_event
+     6	
+     7	
+     8	async def _build_chain(session, n):
+     9	    events = []
+    10	    for i in range(n):
+    11	        event = await append_audit_event(
+    12	            session, TENANT_ID, None, f"decision:approved:{i}"
+    13	        )
+    14	        events.append(event)
+    15	    return events
+    16	
+    17	
+    18	def test_verify_empty_tenant_is_valid():
+    19	    engine, session, tenant = run(make_sqlite_session())
+    20	    try:
+    21	        with client_for(session, tenant) as client:
+    22	            response = client.get("/v1/audit-events/verify")
+    23	
+    24	        assert response.status_code == 200
+    25	        body = response.json()
+    26	        assert body["valid"] is True
+    27	        assert body["events_checked"] == 0
+    28	        assert body["first_invalid_event_id"] is None
+    29	        assert body["checked_at"]
+    30	    finally:
+    31	        run(session.close())
+    32	        run(engine.dispose())
+    33	
+    34	
+    35	def test_verify_intact_chain_is_valid():
+    36	    engine, session, tenant = run(make_sqlite_session())
+    37	    try:
+    38	        events = run(_build_chain(session, 3))
+    39	        assert events[0].prev_hash is None
+    40	        assert events[1].prev_hash == events[0].event_hash
+    41	        assert events[2].prev_hash == events[1].event_hash
+    42	
+    43	        with client_for(session, tenant) as client:
+    44	            response = client.get("/v1/audit-events/verify")
+    45	
+    46	        assert response.status_code == 200
+    47	        body = response.json()
+    48	        assert body["valid"] is True
+    49	        assert body["events_checked"] == 3
+    50	        assert body["first_invalid_event_id"] is None
+    51	    finally:
+    52	        run(session.close())
+    53	        run(engine.dispose())
+    54	
+    55	
+    56	def test_verify_detects_tampered_payload():
+    57	    engine, session, tenant = run(make_sqlite_session())
+    58	    try:
+    59	        events = run(_build_chain(session, 3))
+    60	        tampered = events[1]
+    61	
+    62	        async def corrupt():
+    63	            await session.execute(
+    64	                update(AuditEvent)
+    65	                .where(AuditEvent.id == tampered.id)
+    66	                .values(execution_result="decision:rejected")
+    67	            )
+    68	            await session.commit()
+    69	
+    70	        run(corrupt())
+    71	
+    72	        with client_for(session, tenant) as client:
+    73	            response = client.get("/v1/audit-events/verify")
+    74	
+    75	        assert response.status_code == 200
+    76	        body = response.json()
+    77	        assert body["valid"] is False
+    78	        assert body["events_checked"] == 3
+    79	        assert body["first_invalid_event_id"] == tampered.id
+    80	    finally:
+    81	        run(session.close())
+    82	        run(engine.dispose())
+    83	
+    84	
+    85	def test_verify_detects_tampered_hash():
+    86	    engine, session, tenant = run(make_sqlite_session())
+    87	    try:
+    88	        events = run(_build_chain(session, 2))
+    89	        tampered = events[0]
+    90	
+    91	        async def corrupt():
+    92	            await session.execute(
+    93	                update(AuditEvent)
+    94	                .where(AuditEvent.id == tampered.id)
+    95	                .values(event_hash="deadbeef" * 8)
+    96	            )
+    97	            await session.commit()
+    98	
+    99	        run(corrupt())
+   100	
+   101	        with client_for(session, tenant) as client:
+   102	            response = client.get("/v1/audit-events/verify")
+   103	
+   104	        assert response.status_code == 200
+   105	        body = response.json()
+   106	        assert body["valid"] is False
+   107	        assert body["events_checked"] == 2
+   108	        assert body["first_invalid_event_id"] == tampered.id
+   109	    finally:
+   110	        run(session.close())
+   111	        run(engine.dispose())
+     1	"""Coverage for app/routers/audit.py — emit, list, verify, CSV export."""
+     2	from sqlalchemy import select
+     3	from test_support import client_for, make_sqlite_session, run
+     4	
+     5	from app.models import Approval, AuditEvent
+     6	from app.services.audit_log import append_audit_event
+     7	
+     8	
+     9	def _seed_approval(session, tenant):
+    10	    approval = Approval(tenant_id=tenant.id, function_name="wire", decision="approved")
+    11	    session.add(approval)
+    12	    run(session.commit())
+    13	    run(session.refresh(approval))
+    14	    return approval
+    15	
+    16	
+    17	def test_emit_audit_event_for_owned_action():
+    18	    engine, session, tenant = run(make_sqlite_session())
+    19	    approval = _seed_approval(session, tenant)
+    20	    try:
+    21	        with client_for(session, tenant) as client:
+    22	            resp = client.post(
+    23	                "/v1/audit-events",
+    24	                json={"action_id": approval.id, "execution_result": "success"},
+    25	            )
+    26	        assert resp.status_code == 200
+    27	        body = resp.json()
+    28	        assert body["action_id"] == approval.id
+    29	        assert body["event_hash"]
+    30	    finally:
+    31	        run(session.close())
+    32	        run(engine.dispose())
+    33	
+    34	
+    35	def test_emit_404_for_unknown_action():
+    36	    engine, session, tenant = run(make_sqlite_session())
+    37	    try:
+    38	        with client_for(session, tenant) as client:
+    39	            resp = client.post(
+    40	                "/v1/audit-events",
+    41	                json={"action_id": "act_missing", "execution_result": "success"},
+    42	            )
+    43	        assert resp.status_code == 404
+    44	    finally:
+    45	        run(session.close())
+    46	        run(engine.dispose())
+    47	
+    48	
+    49	def test_list_events_legacy_and_paginated():
+    50	    engine, session, tenant = run(make_sqlite_session())
+    51	    approval = _seed_approval(session, tenant)
+    52	    for _ in range(3):
+    53	        run(append_audit_event(session, tenant.id, approval.id, "success", None))
+    54	    try:
+    55	        with client_for(session, tenant) as client:
+    56	            legacy = client.get("/v1/audit-events")
+    57	            assert legacy.status_code == 200
+    58	            assert isinstance(legacy.json(), list)
+    59	            assert len(legacy.json()) == 3
+    60	
+    61	            paged = client.get("/v1/audit-events?limit=2")
+    62	            assert paged.status_code == 200
+    63	            env = paged.json()
+    64	            assert env["has_more"] is True
+    65	            assert len(env["data"]) == 2
+    66	
+    67	            filtered = client.get(f"/v1/audit-events?action_id={approval.id}")
+    68	            assert filtered.status_code == 200
+    69	            assert len(filtered.json()) == 3
+    70	    finally:
+    71	        run(session.close())
+    72	        run(engine.dispose())
+    73	
+    74	
+    75	def test_verify_chain_valid():
+    76	    engine, session, tenant = run(make_sqlite_session())
+    77	    approval = _seed_approval(session, tenant)
+    78	    run(append_audit_event(session, tenant.id, approval.id, "success", None))
+    79	    run(append_audit_event(session, tenant.id, approval.id, "success", None))
+    80	    try:
+    81	        with client_for(session, tenant) as client:
+    82	            resp = client.get("/v1/audit-events/verify")
+    83	        assert resp.status_code == 200
+    84	        body = resp.json()
+    85	        assert body["valid"] is True
+    86	        assert body["events_checked"] == 2
+    87	        assert body["first_invalid_event_id"] is None
+    88	    finally:
+    89	        run(session.close())
+    90	        run(engine.dispose())
+    91	
+    92	
+    93	def test_verify_chain_detects_tampering():
+    94	    engine, session, tenant = run(make_sqlite_session())
+    95	    approval = _seed_approval(session, tenant)
+    96	    run(append_audit_event(session, tenant.id, approval.id, "success", None))
+    97	    # tamper: mutate a stored event's payload without recomputing hash
+    98	    rows = run(session.execute(select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)))
+    99	    evt = rows.scalars().first()
+   100	    evt.execution_result = "TAMPERED"
+   101	    run(session.commit())
+   102	    try:
+   103	        with client_for(session, tenant) as client:
+   104	            resp = client.get("/v1/audit-events/verify")
+   105	        assert resp.status_code == 200
+   106	        body = resp.json()
+   107	        assert body["valid"] is False
+   108	        assert body["first_invalid_event_id"] == evt.id
+   109	    finally:
+   110	        run(session.close())
+   111	        run(engine.dispose())
+   112	
+   113	
+   114	def test_export_csv_has_header_and_rows():
+   115	    engine, session, tenant = run(make_sqlite_session())
+   116	    approval = _seed_approval(session, tenant)
+   117	    run(append_audit_event(session, tenant.id, approval.id, "success", None))
+   118	    try:
+   119	        with client_for(session, tenant) as client:
+   120	            resp = client.get("/v1/audit-events.csv")
+   121	        assert resp.status_code == 200
+   122	        assert resp.headers["content-type"].startswith("text/csv")
+   123	        text = resp.text
+   124	        assert "id,action_id,created_at_utc" in text.splitlines()[0]
+   125	        assert approval.id in text
+   126	    finally:
+   127	        run(session.close())
+   128	        run(engine.dispose())

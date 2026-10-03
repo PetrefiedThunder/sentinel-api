@@ -1,0 +1,6 @@
+qa/2026-10-02-sweep
+?? docs/qa/
+?? tests/test_qa_backend.py
+?? tests/test_qa_contract.py
+?? tests/test_qa_dx.py
+All checks passed!

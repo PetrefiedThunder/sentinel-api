@@ -1,0 +1,587 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      - name: Sync deps
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Install aiosqlite (migration tests)
+        run: pip install aiosqlite
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Pytest (with coverage gate)
+        run: pytest -q --cov=app --cov-report=term-missing
+
+  # OpenAPI breaking-change gate. agent-middleware-api integrates against this
+  # API surface (its human-approval gate + permit-request flow), so a breaking
+  # schema change here breaks a production consumer even with zero shared code.
+  # Hard gate on purpose — unlike third-party advisories (pip-audit above),
+  # a breaking change to our own spec is always authored in the PR being
+  # tested, so it is always actionable by that PR's author.
+  # Intentional API change? Regenerate the baseline in the same PR:
+  #   python -c 'import json; from app.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))' > docs/openapi.baseline.json
+  # and flag the PR for a coordinated agent-middleware-api update.
+  # Behavioral (non-schema) contract points are pinned separately in
+  # tests/test_middleware_contract.py.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      - name: Sync deps
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Generate current OpenAPI spec
+        run: python -c 'import json; from app.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))' > /tmp/openapi.current.json
+
+      - name: oasdiff (breaking-change gate vs committed baseline)
+        run: |
+          curl -sSL https://github.com/oasdiff/oasdiff/releases/download/v1.28.0/oasdiff_1.28.0_linux_amd64.tar.gz | tar -xz -C /tmp oasdiff
+          /tmp/oasdiff breaking docs/openapi.baseline.json /tmp/openapi.current.json --fail-on ERR
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # gitleaks needs full history to scan past commits
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install --upgrade pip uv
+
+      # Dependency advisory scan. Resolves the project's dependency tree from
+      # pyproject.toml and checks it against the PyPI advisory database (OSV).
+      # Day-one policy: continue-on-error so a newly disclosed advisory in an
+      # existing/transitive dependency does NOT instantly red-line main for the
+      # whole team. The result stays visible in the job log; we triage and pin.
+      # Local dry run on this branch: "No known vulnerabilities found".
+      - name: pip-audit (dependency advisories)
+        continue-on-error: true
+        run: uvx pip-audit .
+
+      # Secret scan. Hard gate: a clean repo must stay clean. Local dry run on
+      # this branch found no leaks across 60 commits + the working tree, so any
+      # hit here is a real regression that should block the merge.
+      # Run the gitleaks binary directly rather than gitleaks-action: the
+      # action calls the GitHub API to post PR summaries and fails with
+      # "Resource not accessible by integration" without a permissions block.
+      # The binary needs no API access and is a clean hard gate (exit 1 on leak).
+      - name: gitleaks (secret scan)
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks git . --redact --no-banner
+import asyncio
+from contextlib import contextmanager
+
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.auth import get_current_tenant
+from app.db import Base, get_db
+from app.main import app
+from app.models import Tenant
+
+TENANT_ID = "ten_test"
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+async def make_sqlite_session():
+    import app.models  # noqa: F401
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session = session_factory()
+    tenant = Tenant(id=TENANT_ID, name="Test Tenant", email="team@example.com")
+    session.add(tenant)
+    await session.commit()
+    return engine, session, tenant
+
+
+@contextmanager
+def client_for(session, tenant=None):
+    tenant = tenant or Tenant(id=TENANT_ID, name="Test Tenant", email="team@example.com")
+
+    async def override_get_db():
+        yield session
+
+    async def override_get_current_tenant():
+        return tenant
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_tenant] = override_get_current_tenant
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+"""Migration round-trip: every alembic migration must be reversible.
+
+Strategy: spin up an empty SQLite-async database, walk forward through
+every revision, then walk back, then forward again. If any down-migration
+is broken or the chain has a gap, this fails.
+
+Why SQLite: round-trip on a real Postgres is slow + needs CI Postgres
+service. SQLite catches ≈90% of issues (revision chain bugs, missing
+op.drop_column / op.drop_table calls, model-vs-migration drift) and runs
+in 2 seconds with zero infra.
+
+Production-only features (Postgres-specific column types, RLS policies)
+won't be exercised here — that's why we still run an actual `alembic
+upgrade head` on the container start in Dockerfile CMD.
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+from alembic import command
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ALEMBIC_INI = REPO_ROOT / "alembic.ini"
+
+
+def _make_config(db_url: str) -> Config:
+    # env.py reads DATABASE_URL directly (not the alembic cfg) — see alembic/env.py
+    os.environ["DATABASE_URL"] = db_url
+    cfg = Config(str(ALEMBIC_INI))
+    cfg.set_main_option("script_location", str(REPO_ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", db_url)
+    return cfg
+
+
+def _list_revisions(cfg: Config) -> list[str]:
+    """All revisions oldest → newest."""
+    script = ScriptDirectory.from_config(cfg)
+    revs = list(script.walk_revisions(base="base", head="head"))
+    return [r.revision for r in reversed(revs)]
+
+
+@pytest.mark.skipif(
+    not ALEMBIC_INI.exists(),
+    reason="alembic.ini missing — not a deployed checkout",
+)
+def test_revision_chain_is_linear(tmp_path):
+    """No branches, no gaps. revision n must have down_revision = revision n-1."""
+    db_path = tmp_path / "chain.sqlite"
+    # async sqlite — matches the async-engine pattern alembic/env.py expects
+    cfg = _make_config(f"sqlite+aiosqlite:///{db_path}")
+    revisions = _list_revisions(cfg)
+
+    # First migration has down_revision = None. Each subsequent must point at
+    # the one that came before it.
+    script = ScriptDirectory.from_config(cfg)
+    for i, rev_id in enumerate(revisions):
+        rev = script.get_revision(rev_id)
+        if i == 0:
+            assert rev.down_revision is None, (
+                f"First migration {rev_id} should have down_revision = None, "
+                f"got {rev.down_revision!r}"
+            )
+        else:
+            assert rev.down_revision == revisions[i - 1], (
+                f"Migration {rev_id} has down_revision={rev.down_revision!r} "
+                f"but the previous revision is {revisions[i - 1]!r}. "
+                f"Make sure new migrations chain off the last one."
+            )
+
+
+@pytest.mark.skipif(
+    not ALEMBIC_INI.exists(),
+    reason="alembic.ini missing — not a deployed checkout",
+)
+def test_full_upgrade_then_downgrade_to_base(tmp_path):
+    """upgrade head → downgrade base — every reverse op must succeed."""
+    db_path = tmp_path / "roundtrip.sqlite"
+    # async sqlite — matches the async-engine pattern alembic/env.py expects
+    cfg = _make_config(f"sqlite+aiosqlite:///{db_path}")
+
+    # Forward to head
+    command.upgrade(cfg, "head")
+
+    # All the way back to base — exercises every downgrade()
+    command.downgrade(cfg, "base")
+
+    # Forward again to prove we can re-apply on a clean slate
+    command.upgrade(cfg, "head")
+
+
+@pytest.mark.skipif(
+    not ALEMBIC_INI.exists(),
+    reason="alembic.ini missing — not a deployed checkout",
+)
+def test_step_by_step_roundtrip(tmp_path):
+    """Each migration individually: upgrade +1, downgrade -1, upgrade +1.
+
+    Surfaces the case where the chain works going forward but one specific
+    downgrade is broken. Slower than the all-at-once test but pinpoints
+    which migration is the problem.
+    """
+    db_path = tmp_path / "stepwise.sqlite"
+    # async sqlite — matches the async-engine pattern alembic/env.py expects
+    cfg = _make_config(f"sqlite+aiosqlite:///{db_path}")
+    revisions = _list_revisions(cfg)
+
+    for rev in revisions:
+        command.upgrade(cfg, rev)
+        # Go back one (only meaningful if there's something to go back to)
+        if rev != revisions[0]:
+            command.downgrade(cfg, "-1")
+            command.upgrade(cfg, "+1")
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+from alembic.config import Config
+
+from alembic import command
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MIGRATION = REPO_ROOT / "alembic" / "versions" / "012_delivery_outbox.py"
+
+
+def _config(db_path: Path, monkeypatch) -> Config:
+    url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", url)
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(REPO_ROOT / "alembic"))
+    config.set_main_option("sqlalchemy.url", url)
+    return config
+
+
+def test_delivery_outbox_migration_has_target_links_and_dedupe_constraint(
+    tmp_path,
+    monkeypatch,
+):
+    assert MIGRATION.exists(), "012 delivery outbox migration is missing"
+    db_path = tmp_path / "outbox.sqlite"
+    config = _config(db_path, monkeypatch)
+    command.upgrade(config, "012")
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {
+            row[1]: {"type": row[2], "nullable": not bool(row[3]), "default": row[4]}
+            for row in connection.execute("PRAGMA table_info(delivery_outbox)")
+        }
+        assert set(columns) == {
+            "id",
+            "tenant_id",
+            "action_id",
+            "kind",
+            "dedupe_key",
+            "notification_attempt_id",
+            "webhook_delivery_id",
+            "status",
+            "attempt_count",
+            "next_attempt_at",
+            "lease_owner",
+            "lease_expires_at",
+            "last_error",
+            "delivered_at",
+            "created_at",
+            "updated_at",
+        }
+        assert columns["status"]["default"] == "'pending'"
+        assert columns["attempt_count"]["default"] == "0"
+        foreign_targets = {
+            row[3]: row[2] for row in connection.execute("PRAGMA foreign_key_list(delivery_outbox)")
+        }
+        assert foreign_targets == {
+            "tenant_id": "tenants",
+            "action_id": "approvals",
+            "notification_attempt_id": "notification_attempts",
+            "webhook_delivery_id": "webhook_deliveries",
+        }
+        indexes = list(connection.execute("PRAGMA index_list(delivery_outbox)"))
+        unique_columns = {
+            tuple(column[2] for column in connection.execute(f"PRAGMA index_info('{index[1]}')"))
+            for index in indexes
+            if index[2]
+        }
+        assert ("tenant_id", "dedupe_key") in unique_columns
+        assert ("notification_attempt_id",) in unique_columns
+        assert ("webhook_delivery_id",) in unique_columns
+        index_columns = {
+            tuple(column[2] for column in connection.execute(f"PRAGMA index_info('{index[1]}')"))
+            for index in indexes
+        }
+        assert ("status", "next_attempt_at") in index_columns
+        assert ("status", "lease_expires_at") in index_columns
+        table_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'delivery_outbox'"
+        ).fetchone()[0]
+        assert "attempt_count >= 0" in table_sql
+        assert "kind = 'approval.webhook'" in table_sql
+
+    command.downgrade(config, "011")
+    with sqlite3.connect(db_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    assert "delivery_outbox" not in tables
+import asyncio
+import os
+from logging.config import fileConfig
+
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from alembic import context
+from app import models  # noqa: F401
+from app.models import Base
+
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = Base.metadata
+
+
+def get_url() -> str:
+    url = os.environ.get(
+        "DATABASE_URL",
+        "postgresql+asyncpg://[REDACTED]@localhost:5432/sentinel",
+    )
+    if url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+    elif url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgres://"):]
+    return url
+
+
+def run_migrations_offline() -> None:
+    context.configure(
+        url=get_url(),
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def do_run_migrations(connection: Connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    connectable = create_async_engine(get_url(), poolclass=pool.NullPool)
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await connectable.dispose()
+
+
+def run_migrations_online() -> None:
+    asyncio.run(run_async_migrations())
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+# FastAPI (Python) Web Security Spec (FastAPI 0.128.x, Python 3.x) ([PyPI][1])
+
+This document is designed as a **security spec** that supports:
+
+1. **Secure-by-default code generation** for new FastAPI code.
+2. **Security review / vulnerability hunting** in existing FastAPI code (passive “notice issues while working” and active “scan the repo and report findings”).
+
+It is intentionally written as a set of **normative requirements** (“MUST/SHOULD/MAY”) plus **audit rules** (what bad patterns look like, how to detect them, and how to fix/mitigate them).
+
+FastAPI is commonly deployed with an ASGI server (e.g., Uvicorn) and is built on Starlette + Pydantic, so this spec covers those layers where they affect security. ([PyPI][1])
+
+---
+
+## 0) Safety, boundaries, and anti-abuse constraints (MUST FOLLOW)
+
+* MUST NOT request, output, log, or commit secrets (API keys, passwords, private keys, session cookies, signing keys, database URLs with credentials).
+* MUST NOT “fix” security by disabling protections (e.g., weakening auth, making CORS permissive, skipping signature checks, disabling validation, turning off TLS verification, adding `allow_origins=["*"]` with credentials).
+* MUST provide **evidence-based findings** during audits: cite file paths, code snippets, and configuration values that justify the claim.
+* MUST treat uncertainty honestly: if a protection might exist in infrastructure (reverse proxy, WAF, CDN, service mesh), report it as “not visible in app code; verify at runtime/config”.
+* MUST treat browser controls correctly:
+
+  * CORS is **not** an auth mechanism; it only affects browsers.
+  * CSRF defenses apply when the browser automatically attaches credentials (cookies); they are usually not relevant for purely header-token APIs. ([OWASP Cheat Sheet Series][2])
+
+---
+
+## 1) Operating modes
+
+### 1.1 Generation mode (default)
+
+When asked to write new FastAPI code or modify existing code:
+
+* MUST follow every **MUST** requirement in this spec.
+* SHOULD follow every **SHOULD** requirement unless the user explicitly says otherwise.
+* MUST prefer safe-by-default APIs and proven libraries over custom security code.
+* MUST avoid introducing new risky sinks (shell execution, unsafe deserialization, dynamic eval, untrusted template rendering, unsafe file serving, unsafe redirects, arbitrary outbound fetching).
+
+### 1.2 Passive review mode (always on while editing)
+
+While working anywhere in a FastAPI repo (even if the user did not ask for a security scan):
+
+* MUST “notice” violations of this spec in touched/nearby code.
+* SHOULD mention issues as they come up, with a brief explanation + safe fix.
+
+### 1.3 Active audit mode (explicit scan request)
+
+When the user asks to “scan”, “audit”, or “hunt for vulns”:
+
+* MUST systematically search the codebase for violations of this spec.
+* MUST output findings in a structured format (see §2.3).
+
+Recommended audit order:
+
+1. App entrypoints / deployment scripts / Dockerfiles / Procfiles / Helm/terraform.
+2. ASGI server configuration (Uvicorn/Gunicorn), proxy settings, debug/reload settings.
+3. FastAPI app configuration (docs exposure, middleware, trusted hosts, CORS).
+4. Authn/Authz design (dependencies, JWT/session handling, password storage).
+5. Cookie/session usage + CSRF (if cookies are used).
+6. Input validation and output shaping (Pydantic models, mass assignment, excessive data exposure).
+7. Template rendering and XSS/SSTI (if HTML is served).
+8. File handling (uploads + downloads), StaticFiles, Range support.
+9. Injection classes (SQL, command execution, unsafe deserialization).
+10. Outbound requests (SSRF), redirect handling, WebSockets security.
+
+---
+
+## 2) Definitions and review guidance
+
+### 2.1 Untrusted input (treat as attacker-controlled unless proven otherwise)
+
+Examples include:
+
+* Query parameters / path parameters
+* JSON bodies (including nested fields)
+* Headers (including `Host`, `Origin`, `X-Forwarded-*`)
+* Cookies (including session cookies)
+* File uploads (multipart parts)
+* WebSocket messages, query params, and headers during handshake ([Starlette][3])
+* Any data from external systems (webhooks, third-party APIs, message queues)
+* Any persisted user content (DB rows) that originated from users
+
+### 2.2 State-changing request
+
+A request is state-changing if it can create/update/delete data, change auth/session state, trigger side effects (purchase, email send, webhook send), or initiate privileged actions.
+
+### 2.3 Required audit finding format
+
+For each issue found, output:
+
+* Rule ID:
+* Severity: Critical / High / Medium / Low
+* Location: file path + function/route name + line(s)
+* Evidence: the exact code/config snippet
+* Impact: what could go wrong, who can exploit it
+* Fix: safe change (prefer minimal diff)
+* Mitigation: defense-in-depth if immediate fix is hard
+* False positive notes: what to verify if uncertain
+
+---
+
+## 3) Secure baseline: minimum production configuration (MUST in production)
+
+This is the smallest “production baseline” that prevents common FastAPI/ASGI misconfigurations.
+
+Baseline goals:
+
+* No debug tracebacks or auto-reload in production. ([PyPI][4])
+* Run under a production ASGI server configuration (workers, timeouts, resource controls). ([PyPI][4])
+* Host header validation enabled (TrustedHostMiddleware or equivalent). ([PyPI][5])
+* CORS disabled unless explicitly needed; if enabled, it is strict and least-privilege. ([OWASP Cheat Sheet Series][6])
+* Auth is enforced consistently via dependencies (no “oops, forgot auth on this route”). ([FastAPI][7])
+* If cookies/sessions are used, cookie flags are secure and CSRF is addressed. ([OWASP Cheat Sheet Series][8])
+* Request size limits and multipart limits exist at the edge and are validated in app as needed (to mitigate memory/CPU DoS). ([advisories.gitlab.com][9])
+* Dependencies are patched promptly, especially Starlette/python-multipart (multiple DoS and traversal advisories exist historically). ([advisories.gitlab.com][10])
+
+---
+
+## 4) Rules (generation + audit)
+
+Each rule contains: required practice, insecure patterns, detection hints, and remediation.
+
+### FASTAPI-DEPLOY-001: Do not use auto-reload / dev-only server modes in production
+
+Severity: High (if production)
+
+Required:
+
+* MUST NOT run production using auto-reload/watch mode (e.g., Uvicorn reload).
+* MUST run with a production process model (e.g., multiple workers where appropriate) and stable server settings. ([PyPI][4])
+
+Insecure patterns:
+
+* `uvicorn ... --reload` (or equivalent “reload=True” configs) in production entrypoints.
+* Docker/Procfile/systemd commands that run with `--reload` in production.
+
+Detection hints:
+
+* Search for `--reload`, `reload=True`, `watchfiles`, `fastapi dev`, “development” run scripts.
+* Check Docker CMD/ENTRYPOINT, Procfile, systemd units, shell scripts.
+
+Fix:
+
+* Remove reload in production; run Uvicorn/Gunicorn with stable settings and explicit worker configuration. ([PyPI][4])
+
+Note:
+
+* Reload is fine for local development. Only flag when it is clearly used as a production entrypoint.
+
+---
+
+### FASTAPI-DEPLOY-002: Debug mode MUST be disabled in production
+
+Severity: Critical
+
+Required:
+
+* MUST NOT enable debug tracebacks in production (FastAPI/Starlette debug mode can expose sensitive internals and make some exploit chains easier). ([PyPI][5])
+* MUST treat any configuration that returns detailed stack traces to clients as sensitive.
+
+Insecure patterns:
+Secret candidate classification: requires safe review
+Local venv exists: False

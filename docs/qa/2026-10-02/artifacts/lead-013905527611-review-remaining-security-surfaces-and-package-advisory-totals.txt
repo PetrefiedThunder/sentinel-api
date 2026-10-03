@@ -1,0 +1,445 @@
+"""Tiny Redis-backed rate limiter for signup / recovery / other abuse-prone endpoints.
+
+Fixed-window counter — simplest thing that solves the abuse case without
+adding a dependency. Two failure modes are designed to fail-open: if Redis
+is unreachable, or the key is malformed, the limiter does NOT block — we'd
+rather risk a brief abuse window than take signup offline.
+"""
+from __future__ import annotations
+
+import logging
+
+from fastapi import HTTPException, Request
+from redis.asyncio import Redis
+
+from app.config import settings
+
+log = logging.getLogger(__name__)
+
+_redis: Redis | None = None
+
+
+def _client() -> Redis | None:
+    global _redis
+    if _redis is None:
+        try:
+            _redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        except Exception as e:
+            log.warning("Rate-limit Redis init failed: %s", e)
+            return None
+    return _redis
+
+
+def client_ip(request: Request) -> str:
+    """Best-effort client IP. Trust the first hop from X-Forwarded-For when set
+    by our edge (Vercel proxy / Railway router), else fall back to the socket."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        # left-most entry is the original client per RFC 7239
+        return fwd.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+async def enforce(
+    request: Request,
+    *,
+    bucket: str,
+    limit: int,
+    window_seconds: int,
+    key_suffix: str = "",
+    by_ip: bool = True,
+) -> None:
+    """Throw 429 if more than `limit` requests in `window_seconds`.
+
+    Args:
+        bucket: short identifier of the protected route, e.g. "signup".
+        limit: max requests per window.
+        window_seconds: window length.
+        key_suffix: optional extra discriminator (e.g. lowercased email) so the
+            same IP using different emails still gets independent counters.
+        by_ip: when True (default), bucket per client IP. Set False to bucket
+            globally on (bucket, key_suffix) — useful when edge proxies rotate
+            client IPs, or when you want to throttle by email-domain alone.
+
+    Side effect: stashes the latest (limit, remaining, reset_in) onto
+    `request.state.rate_limit_headers` so the response middleware can
+    surface X-RateLimit-* headers — Stripe-style ergonomics.
+    """
+    r = _client()
+    if r is None:
+        # fail-open: better to allow than 500. Skip header surfacing too.
+        return
+
+    parts = ["rl", bucket]
+    if by_ip:
+        parts.append(client_ip(request))
+    if key_suffix:
+        parts.append(key_suffix)
+    key = ":".join(parts)
+    try:
+        count = await r.incr(key)
+        if count == 1:
+            await r.expire(key, window_seconds)
+        ttl_raw = await r.ttl(key)
+        ttl = window_seconds if (ttl_raw is None or ttl_raw < 0) else ttl_raw
+        remaining = max(0, limit - count)
+
+        # Stash for response middleware. Last-bucket-checked wins; if a
+        # handler enforces several buckets, the tightest is most useful —
+        # callers should call the most-restrictive bucket LAST.
+        request.state.rate_limit_headers = {
+            "X-RateLimit-Limit": str(limit),
+            "X-RateLimit-Remaining": str(remaining),
+            "X-RateLimit-Reset": str(ttl),
+            "X-RateLimit-Bucket": bucket,
+        }
+
+        if count > limit:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Rate limit exceeded for {bucket}. "
+                    f"Try again in {ttl} seconds."
+                ),
+                headers={
+                    "Retry-After": str(ttl),
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(ttl),
+                    "X-RateLimit-Bucket": bucket,
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # any other Redis hiccup → fail-open
+        log.warning("Rate-limit check failed (fail-open): %s", e)
+        return
+"""Structured (JSON) logging via structlog.
+
+Configures structlog to render every log line as a single JSON object
+with timestamp, level, logger, event, plus any bound context (request_id,
+tenant_id, route, etc.). Wired into FastAPI's request lifecycle via
+RequestContextMiddleware.
+
+Why JSON: Railway's log search is grep over raw text. JSON lines let us
+filter by `tenant_id` / `route` / `request_id` without false positives.
+When we eventually ship logs to Datadog/Better Stack/etc, the JSON
+fields become indexed dimensions for free.
+"""
+from __future__ import annotations
+
+import logging
+import secrets
+import sys
+from contextvars import ContextVar
+from typing import Any
+
+import structlog
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+# Per-request context that gets stamped onto every log line emitted during
+# the request. set() in middleware, .get() inside structlog processor.
+_request_ctx: ContextVar[dict[str, Any] | None] = ContextVar("_request_ctx", default=None)
+
+
+def _inject_request_ctx(_, __, event_dict: dict) -> dict:
+    """structlog processor: merge any active request context into the log."""
+    ctx = _request_ctx.get() or {}
+    for k, v in ctx.items():
+        event_dict.setdefault(k, v)
+    return event_dict
+
+
+def configure_logging(level: str = "INFO") -> None:
+    """Replace stdlib logging output with JSON structlog. Idempotent."""
+    timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
+
+    shared_processors = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        _inject_request_ctx,
+        timestamper,
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+    ]
+
+    structlog.configure(
+        processors=shared_processors + [structlog.processors.JSONRenderer()],
+        wrapper_class=structlog.make_filtering_bound_logger(
+            logging.getLevelName(level.upper()) if isinstance(level, str) else level
+        ),
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        cache_logger_on_first_use=True,
+    )
+
+    # Route stdlib logging (FastAPI / uvicorn / SQLAlchemy) through structlog
+    # so we get JSON for those too — otherwise we'd have two log formats.
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.JSONRenderer(),
+        ],
+    )
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    # Don't double up handlers if reload re-imports this module
+    root.handlers = [handler]
+    root.setLevel(level.upper())
+
+    # Quieter health-check noise from uvicorn access logs
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Stamp every log line emitted during a request with request_id +
+    method + route, and emit a structured access log on completion.
+
+    Tenant_id is added downstream by the auth dependency when a request
+    hits an authenticated route — see auth.get_current_tenant.
+    """
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        request_id = request.headers.get("x-request-id") or secrets.token_hex(8)
+        ctx = {
+            "request_id": request_id,
+            "method": request.method,
+            "route": request.url.path,
+        }
+        token = _request_ctx.set(ctx)
+        logger = structlog.get_logger("http")
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception("request.error")
+            raise
+        else:
+            logger.info(
+                "request.completed",
+                status_code=response.status_code,
+            )
+            response.headers["X-Request-Id"] = request_id
+            # Surface rate-limit context if the handler enforced a bucket
+            rl = getattr(request.state, "rate_limit_headers", None)
+            if isinstance(rl, dict):
+                for k, v in rl.items():
+                    response.headers[k] = v
+            return response
+        finally:
+            _request_ctx.reset(token)
+
+
+def bind_request_context(**fields: Any) -> None:
+    """Call from anywhere inside a request handler to attach additional
+    fields (tenant_id, action_id, etc.) to every subsequent log line in
+    this request."""
+    current = dict(_request_ctx.get() or {})
+    current.update({k: v for k, v in fields.items() if v is not None})
+    _request_ctx.set(current)
+
+
+def get_logger(name: str = "sentinel") -> structlog.stdlib.BoundLogger:
+    return structlog.get_logger(name)
+"""Webhook delivery — HMAC-signed POSTs to customer URLs on approval decisions.
+
+Flow:
+  1. Customer registers an endpoint via POST /v1/webhooks with a URL.
+     We mint a random secret and return it ONCE.
+  2. When an approval is decided (approved/rejected), we look up matching
+     endpoints for that tenant and fire a POST.
+  3. The POST body is JSON: {event, action_id, decision, decided_by, ...}
+  4. We sign the body with HMAC-SHA256(secret, raw_body) and put the
+     signature in the `X-Sentinel-Signature` header. Customer can verify.
+  5. We log every attempt in webhook_deliveries (status_code, response_snippet).
+  6. Best-effort with 3 retries on 5xx/timeout, exponential backoff
+     (1s, 4s, 16s). Never blocks the decision endpoint.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import json
+import logging
+import secrets
+from datetime import datetime
+from typing import Any
+
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Approval, WebhookDelivery, WebhookEndpoint
+
+log = logging.getLogger(__name__)
+
+MAX_ATTEMPTS = 3
+BACKOFF_SECONDS = [1.0, 4.0, 16.0]
+HTTP_TIMEOUT = 8.0
+SIGNATURE_HEADER = "X-Sentinel-Signature"
+EVENT_HEADER = "X-Sentinel-Event"
+ID_HEADER = "X-Sentinel-Delivery"
+
+# The event loop only keeps weak references to tasks; without a strong
+# reference here, an in-flight delivery (and its retries) can be GC'd.
+_inflight: set[asyncio.Task] = set()
+
+
+def _track(task: asyncio.Task) -> None:
+    _inflight.add(task)
+    task.add_done_callback(_on_delivery_done)
+
+
+def _on_delivery_done(task: asyncio.Task) -> None:
+    _inflight.discard(task)
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        log.error("webhook delivery task crashed: %s", exc, exc_info=exc)
+
+
+def generate_secret() -> str:
+    """64-char URL-safe random secret. Shown ONCE on creation."""
+    return f"whsec_{secrets.token_urlsafe(32)}"
+
+
+def sign_body(secret: str, raw_body: bytes) -> str:
+    """HMAC-SHA256 hex digest of the raw POST body, signed with the endpoint secret.
+
+    Customer verifies via:
+        expected = hmac.new(secret.encode(), raw_body, sha256).hexdigest()
+        if not hmac.compare_digest(expected, request.headers["X-Sentinel-Signature"]):
+            return 401
+    """
+    return hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+
+
+def _event_type_for(approval: Approval) -> str | None:
+    if approval.decision == "approved":
+        return "approval.approved"
+    if approval.decision == "rejected":
+        return "approval.rejected"
+    return None
+
+
+def _matches_filter(endpoint: WebhookEndpoint, event_type: str) -> bool:
+    """Endpoint subscribes to event if filter is empty or contains the event."""
+    f = endpoint.event_filter or []
+    if not f:
+        return True
+    return event_type in f
+
+
+def _build_payload(event_type: str, approval: Approval, delivery_id: str) -> dict[str, Any]:
+    return {
+        "id": delivery_id,
+        "event": event_type,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "action_id": approval.id,
+        "tenant_id": approval.tenant_id,
+        "function_name": approval.function_name,
+        "arguments": approval.arguments,
+        "risk_level": approval.risk_level,
+        "decision": approval.decision,
+        "decided_by": approval.decided_by,
+        "decided_at": approval.decided_at.isoformat() + "Z" if approval.decided_at else None,
+        "reason": approval.reason,
+    }
+
+
+async def dispatch_approval_webhook(
+    db: AsyncSession, approval: Approval
+) -> None:
+    """Look up all webhook endpoints for this tenant subscribed to the event,
+    fire each one as a background task (best-effort with retries)."""
+    event_type = _event_type_for(approval)
+    if event_type is None:
+        return
+
+    result = await db.execute(
+        select(WebhookEndpoint).where(
+            WebhookEndpoint.tenant_id == approval.tenant_id,
+            WebhookEndpoint.disabled_at.is_(None),
+        )
+    )
+    endpoints = [e for e in result.scalars() if _matches_filter(e, event_type)]
+    if not endpoints:
+        return
+
+    for endpoint in endpoints:
+        # Spawn each delivery as its own task — never block the caller.
+        _track(asyncio.create_task(_deliver_with_retries(endpoint, event_type, approval)))
+
+
+async def _deliver_with_retries(
+    endpoint: WebhookEndpoint, event_type: str, approval: Approval
+) -> None:
+    """Run in a background task. Owns its own DB session to avoid lifecycle issues."""
+    from app.db import SessionLocal
+
+    delivery_id = f"whd_{secrets.token_hex(8)}"
+    payload = _build_payload(event_type, approval, delivery_id)
+    raw_body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    signature = sign_body(endpoint.secret, raw_body)
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Sentinel-Webhook/1.0",
+        SIGNATURE_HEADER: signature,
+        EVENT_HEADER: event_type,
+        ID_HEADER: delivery_id,
+    }
+
+    last_status: int | None = None
+    last_snippet: str | None = None
+    success = False
+
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                r = await client.post(endpoint.url, content=raw_body, headers=headers)
+                last_status = r.status_code
+                last_snippet = (r.text or "")[:512]
+                if 200 <= r.status_code < 300:
+                    success = True
+                    break
+                # 4xx (except 408/429) — don't retry, the customer rejected us
+                if 400 <= r.status_code < 500 and r.status_code not in (408, 429):
+                    break
+            except httpx.RequestError as e:
+                last_snippet = f"{type(e).__name__}: {str(e)[:400]}"
+            if attempt < MAX_ATTEMPTS:
+                await asyncio.sleep(BACKOFF_SECONDS[attempt - 1])
+
+    # Record delivery + bump endpoint last-used/status
+    try:
+        async with SessionLocal() as db2:
+            db2.add(
+                WebhookDelivery(
+                    id=delivery_id,
+                    endpoint_id=endpoint.id,
+                    tenant_id=endpoint.tenant_id,
+                    event_type=event_type,
+                    action_id=approval.id,
+                    payload=payload,
+                    attempt=attempt,
+                    status_code=last_status,
+                    response_snippet=last_snippet,
+                    delivered_at=datetime.utcnow() if success else None,
+                )
+            )
+            ep = await db2.get(WebhookEndpoint, endpoint.id)
+            if ep is not None:
+                ep.last_used_at = datetime.utcnow()
+                ep.last_status_code = last_status
+            await db2.commit()
+    except Exception:
+        log.exception("Failed to record webhook delivery for endpoint %s", endpoint.id)
+bandit.json
+results: 0 errors: 0 metrics: {'CONFIDENCE.HIGH': 0, 'CONFIDENCE.LOW': 0, 'CONFIDENCE.MEDIUM': 0, 'CONFIDENCE.UNDEFINED': 0, 'SEVERITY.HIGH': 0, 'SEVERITY.LOW': 0, 'SEVERITY.MEDIUM': 0, 'SEVERITY.UNDEFINED': 0, 'loc': 3186, 'nosec': 0, 'skipped_tests': 0}
+pip-audit.json
+dependencies: 90 vulnerabilities: 0 skipped: [{'name': 'sentinel-api', 'reason': 'Dependency not found on PyPI and could not be audited: sentinel-api (0.1.0)'}]

@@ -1,0 +1,220 @@
+{
+  "current_paths": 24,
+  "current_operations": 29,
+  "baseline_operation_removals": [],
+  "operation_additions": [],
+  "baseline_differing_json_pointers": [],
+  "empty_success_response_schemas": [
+    {
+      "method": "get",
+      "path": "/health",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/approvals",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/approvals",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/approvals/{action_id}",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/approvals/{action_id}/decision",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/approvals/{action_id}/token-decision",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/approvals/{action_id}/wait",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/approver-contacts",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/approver-contacts",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "delete",
+      "path": "/v1/approver-contacts/{contact_id}",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/audit-events",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/audit-events",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/audit-events.csv",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/audit-events/verify",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/billing/checkout",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/billing/me",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/tenants/me",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "patch",
+      "path": "/v1/tenants/me",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/tenants/recover/exchange",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/tenants/recover/request",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/tenants/signup",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/tenants/verify-email",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/webhooks",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/v1/webhooks",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "get",
+      "path": "/v1/webhooks/deliveries",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "delete",
+      "path": "/v1/webhooks/{endpoint_id}",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/webhooks/twilio/inbound",
+      "status": "200",
+      "media_type": "application/json"
+    },
+    {
+      "method": "post",
+      "path": "/webhooks/twilio/status",
+      "status": "200",
+      "media_type": "application/json"
+    }
+  ],
+  "approval_request_properties": {
+    "function_name": {
+      "type": "string",
+      "title": "Function Name"
+    },
+    "arguments": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Arguments",
+      "default": {}
+    },
+    "risk_level": {
+      "type": "string",
+      "title": "Risk Level",
+      "default": "medium"
+    },
+    "approvers": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "title": "Approvers",
+      "default": []
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "title": "Timeout Seconds",
+      "default": 300
+    }
+  },
+  "signup_mode_schema": {
+    "type": "string",
+    "title": "Mode",
+    "default": "live"
+  },
+  "csv_response": {
+    "description": "Successful Response",
+    "content": {
+      "application/json": {
+        "schema": {}
+      }
+    }
+  }
+}

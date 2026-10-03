@@ -1,0 +1,8 @@
+destination_accepted: http://127.0.0.1:9000/internal
+destination_accepted: http://10.0.0.1/internal
+destination_accepted: http://169.254.169.254/internal
+destination_accepted: https://[::1]/internal
+destination_accepted: http://example.com/hook
+destination_accepted: https://
+unsigned_twilio_form_accepted_when_auth_unconfigured: True
+Network calls: zero. Database calls: fake in-memory object only. app/config.py not imported.

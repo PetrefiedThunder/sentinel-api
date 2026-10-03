@@ -1,0 +1,25 @@
+# UX QA / developer experience pass
+
+Scope: this repository contains an API and generated Swagger documentation, not the separately hosted dashboard. Review the local onboarding and contribution instructions, public API discoverability, and the generated documentation UI. No production URLs, real provider APIs, environment files, or credentials are accessed.
+
+## Command record
+
+Every command after initial identity discovery is recorded with UTC start/end, exact command, exit status, and sanitized output in `ux-commands.jsonl`. The initial command was `pwd` at approximately 2026-10-03T01:35:35Z; outcome was the expected workspace `/Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api` (exit 0). This single read-only command preceded the command recorder. UTC date differs from the requested QA folder date because the local date is 2026-10-02 in Los Angeles.
+
+## Charters
+
+1. **UX-C1 — first-time developer onboarding (15 minutes, started 2026-10-03T01:35:42Z).** Follow README and CONTRIBUTING as a newcomer would, compare commands and referenced paths against current packaging and tests, and validate instructions without running migrations, deployment, or real integrations. Verify claims using test-only local reproductions. Nielsen lenses: consistency, error prevention, help/documentation, recognition over recall.
+2. **UX-C2 — generated API documentation (15 minutes, started 2026-10-03T01:37:00Z).** Render the application's actual `/docs` HTML and generated schema locally without its lifecycle or database. Intercept all browser requests; fulfill Swagger assets from locally installed public packages and block external traffic. Check axe WCAG 2.2 AA, keyboard focus and expansion, heading/landmark semantics, narrow viewports, operation discoverability, loading/error states, and console/network errors. Capture screenshots. Browser connections use only the orchestrator's prestarted server.
+3. **UX-C3 — synthesis and regression evidence (10 minutes).** Add expected-failure documentation regression tests only for confirmed defects; report heuristic and browser limitations explicitly.
+
+## Decisions and dead ends
+
+- Identity verified: branch `qa/2026-10-02-sweep`, remote `PetrefiedThunder/sentinel-api`, sole worktree at the provided path.
+- Applying the Playwright skill. The orchestrator's explicit connect-only browser instruction overrides the skill's CLI launch workflow, and the requested QA artifact directory overrides its default artifact path.
+- First npm install failed because the default cache was outside writable roots (`EPERM`); retry used an isolated `/private/tmp` cache and succeeded. No permission or ownership changes were attempted.
+- No dashboard build, application navigation, or dashboard WCAG claim is possible from this repository. Swagger accessibility is evaluated as the developer-facing UI only.
+
+Detailed outcomes and finding references are appended below after verification.
+docs/qa/2026-10-02/BACKEND-FINDINGS.md
+docs/qa/2026-10-02/artifacts/ux-browser-summary.json
+All checks passed!

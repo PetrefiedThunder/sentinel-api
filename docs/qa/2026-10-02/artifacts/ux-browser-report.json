@@ -1,0 +1,3923 @@
+{
+  "started_utc": "2026-10-03T01:40:41.575Z",
+  "browsers": [
+    {
+      "name": "chromium",
+      "errors": [],
+      "browserVersion": "153.0.8010.12",
+      "httpStatus": 200,
+      "operationCount": 29,
+      "title": "Sentinel API - Swagger UI",
+      "headings": [
+        "Sentinel API 0.1.0 OAS 3.1",
+        "tenants",
+        "approvals",
+        "approver-contacts",
+        "audit",
+        "twilio",
+        "webhooks",
+        "status",
+        "billing",
+        "default"
+      ],
+      "landmarks": 1,
+      "desktopOverflow": {
+        "width": 1440,
+        "content": 1440
+      },
+      "navigationTiming": {
+        "name": "http://127.0.0.1:8767/docs",
+        "entryType": "navigation",
+        "startTime": 0,
+        "duration": 168.70000000018626,
+        "navigationId": 6475,
+        "initiatorType": "navigation",
+        "deliveryType": "",
+        "nextHopProtocol": "http/1.0",
+        "renderBlockingStatus": "non-blocking",
+        "contentType": "text/html",
+        "contentEncoding": "",
+        "workerStart": 0,
+        "workerRouterEvaluationStart": 0,
+        "workerCacheLookupStart": 0,
+        "workerMatchedSourceType": "",
+        "workerFinalSourceType": "",
+        "redirectStart": 0,
+        "redirectEnd": 0,
+        "fetchStart": 0.20000000018626451,
+        "domainLookupStart": 2.6000000000931323,
+        "domainLookupEnd": 2.8000000002793968,
+        "connectStart": 2.8000000002793968,
+        "secureConnectionStart": 0,
+        "connectEnd": 2.8999999999068677,
+        "requestStart": 3,
+        "responseStart": 3.6000000000931323,
+        "firstInterimResponseStart": 0,
+        "finalResponseHeadersStart": 3.6000000000931323,
+        "responseEnd": 4,
+        "transferSize": 1311,
+        "encodedBodySize": 1011,
+        "decodedBodySize": 1011,
+        "responseStatus": 200,
+        "serverTiming": [],
+        "unloadEventStart": 0,
+        "unloadEventEnd": 0,
+        "domInteractive": 164.8000000002794,
+        "domContentLoadedEventStart": 164.8000000002794,
+        "domContentLoadedEventEnd": 164.8000000002794,
+        "domComplete": 168.60000000009313,
+        "loadEventStart": 168.60000000009313,
+        "loadEventEnd": 168.70000000018626,
+        "type": "navigate",
+        "redirectCount": 0,
+        "activationStart": 0,
+        "criticalCHRestart": 0,
+        "notRestoredReasons": null,
+        "confidence": {
+          "randomizedTriggerRate": 0.4994798,
+          "value": "high"
+        }
+      },
+      "axe": {
+        "violations": [
+          {
+            "id": "color-contrast",
+            "impact": "serious",
+            "tags": [
+              "cat.color",
+              "wcag2aa",
+              "wcag143",
+              "TTv5",
+              "TT13.c",
+              "EN-301-549",
+              "EN-9.1.4.3",
+              "ACT",
+              "RGAAv4",
+              "RGAA-3.2.1"
+            ],
+            "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+            "help": "Elements must meet minimum color contrast ratio thresholds",
+            "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=axeAPI",
+            "nodes": [
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#7d8492",
+                      "contrastRatio": 3.75,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<small><pre class=\"version\"> 0.1.0 </pre></small>",
+                        "target": [
+                          "small:nth-child(1)"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 3.75 (foreground color: #ffffff, background color: #7d8492, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<pre class=\"version\"> 0.1.0 </pre>",
+                "target": [
+                  "small:nth-child(1) > pre"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.75 (foreground color: #ffffff, background color: #7d8492, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#89bf04",
+                      "contrastRatio": 2.2,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<small class=\"version-stamp\"><pre class=\"version\">OAS 3.1</pre></small>",
+                        "target": [
+                          ".version-stamp"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.2 (foreground color: #ffffff, background color: #89bf04, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<pre class=\"version\">OAS 3.1</pre>",
+                "target": [
+                  ".version-stamp > pre"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.2 (foreground color: #ffffff, background color: #89bf04, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#4990e2",
+                      "bgColor": "#ffffff",
+                      "contrastRatio": 3.29,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 3.29 (foreground color: #4990e2, background color: #ffffff, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"url\"> /openapi.json</span>",
+                "target": [
+                  ".url"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.29 (foreground color: #4990e2, background color: #ffffff, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-tenants-signup_v1_tenants_signup_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-tenants-signup_v1_tenants_signup_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-tenants-verify_email_v1_tenants_verify_email_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-tenants-verify_email_v1_tenants_verify_email_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-tenants-recover_request_v1_tenants_recover_request_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-tenants-recover_request_v1_tenants_recover_request_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-tenants-recover_exchange_v1_tenants_recover_exchange_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-tenants-recover_exchange_v1_tenants_recover_exchange_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-tenants-get_me_v1_tenants_me_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-tenants-get_me_v1_tenants_me_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#50e3c2",
+                      "contrastRatio": 1.6,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">PATCH</span>",
+                        "target": [
+                          ".opblock-summary-patch > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.6 (foreground color: #ffffff, background color: #50e3c2, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">PATCH</span>",
+                "target": [
+                  ".opblock-summary-patch > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.6 (foreground color: #ffffff, background color: #50e3c2, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-approvals-create_v1_approvals_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-approvals-create_v1_approvals_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-approvals-list_approvals_v1_approvals_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-approvals-list_approvals_v1_approvals_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-approvals-wait_for_decision_v1_approvals__action_id__wait_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-approvals-wait_for_decision_v1_approvals__action_id__wait_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-approvals-get_approval_v1_approvals__action_id__get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-approvals-get_approval_v1_approvals__action_id__get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-approvals-decide_v1_approvals__action_id__decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-approvals-decide_v1_approvals__action_id__decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-approvals-decide_with_token_v1_approvals__action_id__token_decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-approvals-decide_with_token_v1_approvals__action_id__token_decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-approver-contacts-create_contact_v1_approver_contacts_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-approver-contacts-create_contact_v1_approver_contacts_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-approver-contacts-list_approver_contacts_v1_approver_contacts_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-approver-contacts-list_approver_contacts_v1_approver_contacts_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#f93e3e",
+                      "contrastRatio": 3.62,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">DELETE</span>",
+                        "target": [
+                          "#operations-approver-contacts-delete_contact_v1_approver_contacts__contact_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 3.62 (foreground color: #ffffff, background color: #f93e3e, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">DELETE</span>",
+                "target": [
+                  "#operations-approver-contacts-delete_contact_v1_approver_contacts__contact_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.62 (foreground color: #ffffff, background color: #f93e3e, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-audit-emit_v1_audit_events_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-audit-emit_v1_audit_events_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-audit-list_events_v1_audit_events_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-audit-list_events_v1_audit_events_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-audit-verify_chain_v1_audit_events_verify_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-audit-verify_chain_v1_audit_events_verify_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-audit-export_csv_v1_audit_events_csv_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-audit-export_csv_v1_audit_events_csv_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-twilio-status_callback_webhooks_twilio_status_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-twilio-status_callback_webhooks_twilio_status_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-twilio-inbound_message_webhooks_twilio_inbound_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-twilio-inbound_message_webhooks_twilio_inbound_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-webhooks-create_webhook_v1_webhooks_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-webhooks-create_webhook_v1_webhooks_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-webhooks-list_webhooks_v1_webhooks_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-webhooks-list_webhooks_v1_webhooks_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#f93e3e",
+                      "contrastRatio": 3.62,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">DELETE</span>",
+                        "target": [
+                          "#operations-webhooks-disable_webhook_v1_webhooks__endpoint_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 3.62 (foreground color: #ffffff, background color: #f93e3e, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">DELETE</span>",
+                "target": [
+                  "#operations-webhooks-disable_webhook_v1_webhooks__endpoint_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.62 (foreground color: #ffffff, background color: #f93e3e, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-webhooks-list_deliveries_v1_webhooks_deliveries_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-webhooks-list_deliveries_v1_webhooks_deliveries_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-status-history_v1_status_history_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-status-history_v1_status_history_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#49cc90",
+                      "contrastRatio": 2.03,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">POST</span>",
+                        "target": [
+                          "#operations-billing-create_checkout_v1_billing_checkout_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">POST</span>",
+                "target": [
+                  "#operations-billing-create_checkout_v1_billing_checkout_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.03 (foreground color: #ffffff, background color: #49cc90, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-billing-get_billing_info_v1_billing_me_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-billing-get_billing_info_v1_billing_me_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#ffffff",
+                      "bgColor": "#61affe",
+                      "contrastRatio": 2.31,
+                      "fontSize": "10.5pt (14px)",
+                      "fontWeight": "bold",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<span class=\"opblock-summary-method\">GET</span>",
+                        "target": [
+                          "#operations-default-health_health_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<span class=\"opblock-summary-method\">GET</span>",
+                "target": [
+                  "#operations-default-health_health_get > .opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-method"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.31 (foreground color: #ffffff, background color: #61affe, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(1) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(1) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(2) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(2) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(3) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(3) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(4) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(4) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(5) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(5) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(6) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(6) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(7) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(7) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(8) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(8) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(9) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(9) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(10) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(10) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(11) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(11) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(12) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(12) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(13) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(13) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              },
+              {
+                "any": [
+                  {
+                    "id": "color-contrast",
+                    "data": {
+                      "fgColor": "#afaeae",
+                      "bgColor": "#efefef",
+                      "contrastRatio": 1.92,
+                      "fontSize": "9.0pt (12px)",
+                      "fontWeight": "normal",
+                      "messageKey": null,
+                      "expectedContrastRatio": "4.5:1"
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                        "target": [
+                          "article:nth-child(14) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button type=\"button\" class=\"json-schema-2020-12-expand-deep-button\">Expand all</button>",
+                "target": [
+                  "article:nth-child(14) > .json-schema-2020-12-head > .json-schema-2020-12-expand-deep-button[type=\"button\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.92 (foreground color: #afaeae, background color: #efefef, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+              }
+            ]
+          },
+          {
+            "id": "heading-order",
+            "impact": "moderate",
+            "tags": [
+              "cat.semantics",
+              "best-practice"
+            ],
+            "description": "Ensure the order of headings is semantically correct",
+            "help": "Heading levels should only increase by one",
+            "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/heading-order?application=axeAPI",
+            "nodes": [
+              {
+                "any": [
+                  {
+                    "id": "heading-order",
+                    "data": null,
+                    "relatedNodes": [],
+                    "impact": "moderate",
+                    "message": "Heading order invalid"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "moderate",
+                "html": "<h3 class=\"opblock-tag no-desc\" id=\"operations-tag-tenants\" data-tag=\"tenants\" data-is-open=\"true\">",
+                "target": [
+                  "#operations-tag-tenants"
+                ],
+                "failureSummary": "Fix any of the following:\n  Heading order invalid"
+              }
+            ]
+          },
+          {
+            "id": "html-has-lang",
+            "impact": "serious",
+            "tags": [
+              "cat.language",
+              "wcag2a",
+              "wcag311",
+              "TTv5",
+              "TT11.a",
+              "EN-301-549",
+              "EN-9.3.1.1",
+              "ACT",
+              "RGAAv4",
+              "RGAA-8.3.1"
+            ],
+            "description": "Ensure every HTML document has a lang attribute",
+            "help": "<html> element must have a lang attribute",
+            "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/html-has-lang?application=axeAPI",
+            "nodes": [
+              {
+                "any": [
+                  {
+                    "id": "has-lang",
+                    "data": {
+                      "messageKey": "noLang"
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "The <html> element does not have a lang attribute"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<html>",
+                "target": [
+                  "html"
+                ],
+                "failureSummary": "Fix any of the following:\n  The <html> element does not have a lang attribute"
+              }
+            ]
+          },
+          {
+            "id": "nested-interactive",
+            "impact": "serious",
+            "tags": [
+              "cat.keyboard",
+              "wcag2a",
+              "wcag412",
+              "TTv5",
+              "TT6.a",
+              "EN-301-549",
+              "EN-9.4.1.2",
+              "RGAAv4",
+              "RGAA-7.1.1"
+            ],
+            "description": "Ensure interactive controls are not nested as they are not always announced by screen readers or can cause focus problems for assistive technologies",
+            "help": "Interactive controls must not be nested",
+            "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/nested-interactive?application=axeAPI",
+            "nodes": [
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/tenants/signup_v1_tenants_signup_post\"><span>/v1<wbr>/tenants<wbr>/signup</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/tenants/signup\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-tenants-signup_v1_tenants_signup_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/tenants/verify_email_v1_tenants_verify_email_post\"><span>/v1<wbr>/tenants<wbr>/verify-email</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/tenants/verify-email\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-tenants-verify_email_v1_tenants_verify_email_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/tenants/recover_request_v1_tenants_recover_request_post\"><span>/v1<wbr>/tenants<wbr>/recover<wbr>/request</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/tenants/recover/request\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-tenants-recover_request_v1_tenants_recover_request_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/tenants/recover_exchange_v1_tenants_recover_exchange_post\"><span>/v1<wbr>/tenants<wbr>/recover<wbr>/exchange</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/tenants/recover/exchange\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-tenants-recover_exchange_v1_tenants_recover_exchange_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/tenants/get_me_v1_tenants_me_get\"><span>/v1<wbr>/tenants<wbr>/me</span></a>",
+                        "target": [
+                          ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/tenants/me\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-tenants-get_me_v1_tenants_me_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/tenants/update_me_v1_tenants_me_patch\"><span>/v1<wbr>/tenants<wbr>/me</span></a>",
+                        "target": [
+                          ".opblock-summary-patch > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/tenants/me\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  ".opblock-summary-patch > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approvals/create_v1_approvals_post\"><span>/v1<wbr>/approvals</span></a>",
+                        "target": [
+                          ".opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/approvals\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approvals-create_v1_approvals_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approvals/list_approvals_v1_approvals_get\"><span>/v1<wbr>/approvals</span></a>",
+                        "target": [
+                          ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/approvals\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approvals-list_approvals_v1_approvals_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approvals/wait_for_decision_v1_approvals__action_id__wait_get\"><span>/v1<wbr>/approvals<wbr>/{action_id}<wbr>/wait</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/approvals/{action_id}/wait\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approvals-wait_for_decision_v1_approvals__action_id__wait_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approvals/get_approval_v1_approvals__action_id__get\"><span>/v1<wbr>/approvals<wbr>/{action_id}</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/approvals/{action_id}\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approvals-get_approval_v1_approvals__action_id__get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approvals/decide_v1_approvals__action_id__decision_post\"><span>/v1<wbr>/approvals<wbr>/{action_id}<wbr>/decision</span></a>",
+                        "target": [
+                          "#operations-approvals-decide_v1_approvals__action_id__decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approvals-decide_v1_approvals__action_id__decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approvals/decide_with_token_v1_approvals__action_id__token_decision_post\"><span>/v1<wbr>/approvals<wbr>/{action_id}<wbr>/token-decision</span></a>",
+                        "target": [
+                          "#operations-approvals-decide_with_token_v1_approvals__action_id__token_decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approvals-decide_with_token_v1_approvals__action_id__token_decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approver-contacts/create_contact_v1_approver_contacts_post\"><span>/v1<wbr>/approver-contacts</span></a>",
+                        "target": [
+                          ".opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/approver-contacts\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approver-contacts-create_contact_v1_approver_contacts_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approver-contacts/list_approver_contacts_v1_approver_contacts_get\"><span>/v1<wbr>/approver-contacts</span></a>",
+                        "target": [
+                          ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/approver-contacts\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approver-contacts-list_approver_contacts_v1_approver_contacts_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/approver-contacts/delete_contact_v1_approver_contacts__contact_id__delete\"><span>/v1<wbr>/approver-contacts<wbr>/{contact_id}</span></a>",
+                        "target": [
+                          "#operations-approver-contacts-delete_contact_v1_approver_contacts__contact_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-approver-contacts-delete_contact_v1_approver_contacts__contact_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/audit/emit_v1_audit_events_post\"><span>/v1<wbr>/audit-events</span></a>",
+                        "target": [
+                          ".opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/audit-events\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-audit-emit_v1_audit_events_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/audit/list_events_v1_audit_events_get\"><span>/v1<wbr>/audit-events</span></a>",
+                        "target": [
+                          ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/audit-events\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-audit-list_events_v1_audit_events_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/audit/verify_chain_v1_audit_events_verify_get\"><span>/v1<wbr>/audit-events<wbr>/verify</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/audit-events/verify\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-audit-verify_chain_v1_audit_events_verify_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/audit/export_csv_v1_audit_events_csv_get\"><span>/v1<wbr>/audit-events.csv</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/audit-events.csv\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-audit-export_csv_v1_audit_events_csv_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/twilio/status_callback_webhooks_twilio_status_post\"><span>/webhooks<wbr>/twilio<wbr>/status</span></a>",
+                        "target": [
+                          "span[data-path=\"/webhooks/twilio/status\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-twilio-status_callback_webhooks_twilio_status_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/twilio/inbound_message_webhooks_twilio_inbound_post\"><span>/webhooks<wbr>/twilio<wbr>/inbound</span></a>",
+                        "target": [
+                          "span[data-path=\"/webhooks/twilio/inbound\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-twilio-inbound_message_webhooks_twilio_inbound_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/webhooks/create_webhook_v1_webhooks_post\"><span>/v1<wbr>/webhooks</span></a>",
+                        "target": [
+                          ".opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/webhooks\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-webhooks-create_webhook_v1_webhooks_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/webhooks/list_webhooks_v1_webhooks_get\"><span>/v1<wbr>/webhooks</span></a>",
+                        "target": [
+                          ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/webhooks\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-webhooks-list_webhooks_v1_webhooks_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/webhooks/disable_webhook_v1_webhooks__endpoint_id__delete\"><span>/v1<wbr>/webhooks<wbr>/{endpoint_id}</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/webhooks/{endpoint_id}\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-webhooks-disable_webhook_v1_webhooks__endpoint_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/webhooks/list_deliveries_v1_webhooks_deliveries_get\"><span>/v1<wbr>/webhooks<wbr>/deliveries</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/webhooks/deliveries\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-webhooks-list_deliveries_v1_webhooks_deliveries_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/status/history_v1_status_history_get\"><span>/v1<wbr>/status<wbr>/history</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/status/history\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-status-history_v1_status_history_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/billing/create_checkout_v1_billing_checkout_post\"><span>/v1<wbr>/billing<wbr>/checkout</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/billing/checkout\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-billing-create_checkout_v1_billing_checkout_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/billing/get_billing_info_v1_billing_me_get\"><span>/v1<wbr>/billing<wbr>/me</span></a>",
+                        "target": [
+                          "span[data-path=\"/v1/billing/me\"] > .nostyle"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-billing-get_billing_info_v1_billing_me_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              },
+              {
+                "any": [
+                  {
+                    "id": "no-focusable-content",
+                    "data": null,
+                    "relatedNodes": [
+                      {
+                        "html": "<a class=\"nostyle\" href=\"#/default/health_health_get\"><span>/health</span></a>",
+                        "target": [
+                          "a[href=\"#/default/health_health_get\"]"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Element has focusable descendants"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                "target": [
+                  "#operations-default-health_health_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                ],
+                "failureSummary": "Fix any of the following:\n  Element has focusable descendants"
+              }
+            ]
+          },
+          {
+            "id": "region",
+            "impact": "moderate",
+            "tags": [
+              "cat.keyboard",
+              "best-practice",
+              "RGAAv4",
+              "RGAA-9.2.1"
+            ],
+            "description": "Ensure all page content is contained by landmarks",
+            "help": "All page content should be contained by landmarks",
+            "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=axeAPI",
+            "nodes": [
+              {
+                "any": [
+                  {
+                    "id": "region",
+                    "data": {
+                      "isIframe": false
+                    },
+                    "relatedNodes": [],
+                    "impact": "moderate",
+                    "message": "Some page content is not contained by landmarks"
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "moderate",
+                "html": "<div class=\"information-container wrapper\">",
+                "target": [
+                  ".information-container"
+                ],
+                "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+              }
+            ]
+          },
+          {
+            "id": "target-size",
+            "impact": "serious",
+            "tags": [
+              "cat.sensory-and-visual-cues",
+              "wcag22aa",
+              "wcag258"
+            ],
+            "description": "Ensure touch targets have sufficient size and space",
+            "help": "All touch targets must be 24px large, or leave sufficient space",
+            "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/target-size?application=axeAPI",
+            "nodes": [
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 173.4,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (173.4px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-tenants-signup_v1_tenants_signup_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/tenants/signup_v1_tenants_signup_post\"><span>/v1<wbr>/tenants<wbr>/signup</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/tenants/signup\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (173.4px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 231.2,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (231.2px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-tenants-verify_email_v1_tenants_verify_email_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/tenants/verify_email_v1_tenants_verify_email_post\"><span>/v1<wbr>/tenants<wbr>/verify-email</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/tenants/verify-email\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (231.2px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 260.1,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (260.1px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-tenants-recover_request_v1_tenants_recover_request_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/tenants/recover_request_v1_tenants_recover_request_post\"><span>/v1<wbr>/tenants<wbr>/recover<wbr>/request</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/tenants/recover/request\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (260.1px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 269.7,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (269.7px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-tenants-recover_exchange_v1_tenants_recover_exchange_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/tenants/recover_exchange_v1_tenants_recover_exchange_post\"><span>/v1<wbr>/tenants<wbr>/recover<wbr>/exchange</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/tenants/recover/exchange\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (269.7px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 134.9,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (134.9px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-tenants-get_me_v1_tenants_me_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/tenants/get_me_v1_tenants_me_get\"><span>/v1<wbr>/tenants<wbr>/me</span></a>",
+                "target": [
+                  ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/tenants/me\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (134.9px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 134.9,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (134.9px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          ".opblock-summary-patch > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/tenants/update_me_v1_tenants_me_patch\"><span>/v1<wbr>/tenants<wbr>/me</span></a>",
+                "target": [
+                  ".opblock-summary-patch > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/tenants/me\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (134.9px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 125.2,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (125.2px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approvals-create_v1_approvals_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approvals/create_v1_approvals_post\"><span>/v1<wbr>/approvals</span></a>",
+                "target": [
+                  ".opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/approvals\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (125.2px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 125.2,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (125.2px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approvals-list_approvals_v1_approvals_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approvals/list_approvals_v1_approvals_get\"><span>/v1<wbr>/approvals</span></a>",
+                "target": [
+                  ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/approvals\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (125.2px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 289,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (289px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approvals-wait_for_decision_v1_approvals__action_id__wait_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approvals/wait_for_decision_v1_approvals__action_id__wait_get\"><span>/v1<wbr>/approvals<wbr>/{action_id}<wbr>/wait</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/approvals/{action_id}/wait\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (289px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 240.8,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (240.8px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approvals-get_approval_v1_approvals__action_id__get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approvals/get_approval_v1_approvals__action_id__get\"><span>/v1<wbr>/approvals<wbr>/{action_id}</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/approvals/{action_id}\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (240.8px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 327.5,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (327.5px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approvals-decide_v1_approvals__action_id__decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approvals/decide_v1_approvals__action_id__decision_post\"><span>/v1<wbr>/approvals<wbr>/{action_id}<wbr>/decision</span></a>",
+                "target": [
+                  "#operations-approvals-decide_v1_approvals__action_id__decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (327.5px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 385.3,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (385.3px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approvals-decide_with_token_v1_approvals__action_id__token_decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approvals/decide_with_token_v1_approvals__action_id__token_decision_post\"><span>/v1<wbr>/approvals<wbr>/{action_id}<wbr>/token-decision</span></a>",
+                "target": [
+                  "#operations-approvals-decide_with_token_v1_approvals__action_id__token_decision_post > .opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (385.3px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 202.3,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (202.3px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approver-contacts-create_contact_v1_approver_contacts_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approver-contacts/create_contact_v1_approver_contacts_post\"><span>/v1<wbr>/approver-contacts</span></a>",
+                "target": [
+                  ".opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/approver-contacts\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (202.3px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 202.3,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (202.3px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approver-contacts-list_approver_contacts_v1_approver_contacts_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approver-contacts/list_approver_contacts_v1_approver_contacts_get\"><span>/v1<wbr>/approver-contacts</span></a>",
+                "target": [
+                  ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/approver-contacts\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (202.3px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 327.5,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (327.5px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-approver-contacts-delete_contact_v1_approver_contacts__contact_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/approver-contacts/delete_contact_v1_approver_contacts__contact_id__delete\"><span>/v1<wbr>/approver-contacts<wbr>/{contact_id}</span></a>",
+                "target": [
+                  "#operations-approver-contacts-delete_contact_v1_approver_contacts__contact_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (327.5px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 154.1,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (154.1px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-audit-emit_v1_audit_events_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/audit/emit_v1_audit_events_post\"><span>/v1<wbr>/audit-events</span></a>",
+                "target": [
+                  ".opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/audit-events\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (154.1px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 154.1,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (154.1px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-audit-list_events_v1_audit_events_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/audit/list_events_v1_audit_events_get\"><span>/v1<wbr>/audit-events</span></a>",
+                "target": [
+                  ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/audit-events\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (154.1px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 221.6,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (221.6px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-audit-verify_chain_v1_audit_events_verify_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/audit/verify_chain_v1_audit_events_verify_get\"><span>/v1<wbr>/audit-events<wbr>/verify</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/audit-events/verify\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (221.6px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 192.7,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (192.7px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-audit-export_csv_v1_audit_events_csv_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/audit/export_csv_v1_audit_events_csv_get\"><span>/v1<wbr>/audit-events.csv</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/audit-events.csv\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (192.7px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 221.6,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (221.6px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-twilio-status_callback_webhooks_twilio_status_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/twilio/status_callback_webhooks_twilio_status_post\"><span>/webhooks<wbr>/twilio<wbr>/status</span></a>",
+                "target": [
+                  "span[data-path=\"/webhooks/twilio/status\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (221.6px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 231.2,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (231.2px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-twilio-inbound_message_webhooks_twilio_inbound_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/twilio/inbound_message_webhooks_twilio_inbound_post\"><span>/webhooks<wbr>/twilio<wbr>/inbound</span></a>",
+                "target": [
+                  "span[data-path=\"/webhooks/twilio/inbound\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (231.2px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 115.6,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (115.6px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-webhooks-create_webhook_v1_webhooks_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/webhooks/create_webhook_v1_webhooks_post\"><span>/v1<wbr>/webhooks</span></a>",
+                "target": [
+                  ".opblock-summary-post.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/webhooks\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (115.6px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 115.6,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (115.6px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-webhooks-list_webhooks_v1_webhooks_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/webhooks/list_webhooks_v1_webhooks_get\"><span>/v1<wbr>/webhooks</span></a>",
+                "target": [
+                  ".opblock-summary-get.opblock-summary > .opblock-summary-control > .opblock-summary-path-description-wrapper > .opblock-summary-path[data-path=\"/v1/webhooks\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (115.6px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 250.5,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (250.5px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-webhooks-disable_webhook_v1_webhooks__endpoint_id__delete > .opblock-summary-delete.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/webhooks/disable_webhook_v1_webhooks__endpoint_id__delete\"><span>/v1<wbr>/webhooks<wbr>/{endpoint_id}</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/webhooks/{endpoint_id}\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (250.5px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 221.6,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (221.6px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-webhooks-list_deliveries_v1_webhooks_deliveries_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/webhooks/list_deliveries_v1_webhooks_deliveries_get\"><span>/v1<wbr>/webhooks<wbr>/deliveries</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/webhooks/deliveries\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (221.6px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 173.4,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (173.4px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-status-history_v1_status_history_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/status/history_v1_status_history_get\"><span>/v1<wbr>/status<wbr>/history</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/status/history\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (173.4px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 192.7,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (192.7px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-billing-create_checkout_v1_billing_checkout_post > .opblock-summary-post.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/billing/create_checkout_v1_billing_checkout_post\"><span>/v1<wbr>/billing<wbr>/checkout</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/billing/checkout\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (192.7px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 134.9,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (134.9px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-billing-get_billing_info_v1_billing_me_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/billing/get_billing_info_v1_billing_me_get\"><span>/v1<wbr>/billing<wbr>/me</span></a>",
+                "target": [
+                  "span[data-path=\"/v1/billing/me\"] > .nostyle"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (134.9px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              },
+              {
+                "any": [
+                  {
+                    "id": "target-size",
+                    "data": {
+                      "minSize": 24,
+                      "width": 67.4,
+                      "height": 19
+                    },
+                    "relatedNodes": [],
+                    "impact": "serious",
+                    "message": "Target has insufficient size (67.4px by 19px, should be at least 24px by 24px)"
+                  },
+                  {
+                    "id": "target-offset",
+                    "data": {
+                      "closestOffset": 19,
+                      "minOffset": 24
+                    },
+                    "relatedNodes": [
+                      {
+                        "html": "<button aria-expanded=\"false\" class=\"opblock-summary-control\">",
+                        "target": [
+                          "#operations-default-health_health_get > .opblock-summary-get.opblock-summary > .opblock-summary-control"
+                        ]
+                      }
+                    ],
+                    "impact": "serious",
+                    "message": "Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+                  }
+                ],
+                "all": [],
+                "none": [],
+                "impact": "serious",
+                "html": "<a class=\"nostyle\" href=\"#/default/health_health_get\"><span>/health</span></a>",
+                "target": [
+                  "a[href=\"#/default/health_health_get\"]"
+                ],
+                "failureSummary": "Fix any of the following:\n  Target has insufficient size (67.4px by 19px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 19px instead of at least 24px."
+              }
+            ]
+          }
+        ],
+        "incomplete": [
+          {
+            "id": "aria-prohibited-attr",
+            "nodes": 29
+          }
+        ],
+        "passes": 26
+      },
+      "keyboard": [
+        {
+          "tag": "A",
+          "text": "/openapi.json",
+          "expanded": null
+        },
+        {
+          "tag": "A",
+          "text": "tenants",
+          "expanded": null
+        },
+        {
+          "tag": "BUTTON",
+          "text": "",
+          "expanded": "true"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "POST/v1/tenants/signupSignup",
+          "expanded": "false"
+        },
+        {
+          "tag": "A",
+          "text": "/v1/tenants/signup",
+          "expanded": null
+        },
+        {
+          "tag": "BUTTON",
+          "text": "",
+          "expanded": null
+        },
+        {
+          "tag": "BUTTON",
+          "text": "POST/v1/tenants/verify-emailVerify Email",
+          "expanded": "false"
+        },
+        {
+          "tag": "A",
+          "text": "/v1/tenants/verify-email",
+          "expanded": null
+        }
+      ],
+      "keyboardExpandsOperation": true,
+      "expandedOperationSemantics": "- button \"POST /v1/approvals Create\" [expanded]:\n  - text: POST\n  - link \"/v1/approvals\":\n    - /url: \"#/approvals/create_v1_approvals_post\"\n  - text: Create\n- button \"Copy path to clipboard\"\n- button \"post /v1/approvals\" [expanded]\n- img",
+      "focusOutline": {
+        "style": "auto",
+        "width": "3px"
+      },
+      "mobileOverflow": {
+        "width": 375,
+        "content": 375
+      },
+      "loadingText": "",
+      "errorText": "Failed to load API definition.\nErrors\nHide\n \nFetch error\nService Unavailable /openapi.json\n ",
+      "errorAlerts": 0,
+      "emptyText": "Sentinel API\n QA empty state \nOAS 3.1\n/openapi.json\nNo operations defined in spec!"
+    },
+    {
+      "name": "firefox",
+      "errors": [],
+      "browserVersion": "155.0",
+      "httpStatus": 200,
+      "operationCount": 29,
+      "title": "Sentinel API - Swagger UI",
+      "headings": [
+        "Sentinel API 0.1.0 OAS 3.1",
+        "tenants",
+        "approvals",
+        "approver-contacts",
+        "audit",
+        "twilio",
+        "webhooks",
+        "status",
+        "billing",
+        "default"
+      ],
+      "landmarks": 1,
+      "desktopOverflow": {
+        "width": 1440,
+        "content": 1440
+      },
+      "navigationTiming": {
+        "name": "http://127.0.0.1:8767/docs",
+        "entryType": "navigation",
+        "startTime": 0,
+        "duration": 219,
+        "initiatorType": "navigation",
+        "nextHopProtocol": "http/1.0",
+        "workerStart": 0,
+        "redirectStart": 0,
+        "redirectEnd": 0,
+        "fetchStart": -1,
+        "domainLookupStart": -1,
+        "domainLookupEnd": -1,
+        "connectStart": 31,
+        "connectEnd": 31,
+        "secureConnectionStart": 0,
+        "requestStart": 32,
+        "finalResponseHeadersStart": 32,
+        "firstInterimResponseStart": 0,
+        "responseStart": 32,
+        "responseEnd": 32,
+        "transferSize": 1311,
+        "encodedBodySize": 1011,
+        "decodedBodySize": 1011,
+        "responseStatus": 200,
+        "contentType": "text/html",
+        "serverTiming": [],
+        "unloadEventStart": 0,
+        "unloadEventEnd": 0,
+        "domInteractive": 214,
+        "domContentLoadedEventStart": 218,
+        "domContentLoadedEventEnd": 219,
+        "domComplete": 219,
+        "loadEventStart": 219,
+        "loadEventEnd": 219,
+        "type": "navigate",
+        "redirectCount": 0
+      }
+    },
+    {
+      "name": "webkit",
+      "errors": [],
+      "browserVersion": "26.6",
+      "httpStatus": 200,
+      "operationCount": 29,
+      "title": "Sentinel API - Swagger UI",
+      "headings": [
+        "Sentinel API 0.1.0 OAS 3.1",
+        "tenants",
+        "approvals",
+        "approver-contacts",
+        "audit",
+        "twilio",
+        "webhooks",
+        "status",
+        "billing",
+        "default"
+      ],
+      "landmarks": 1,
+      "desktopOverflow": {
+        "width": 1440,
+        "content": 1440
+      },
+      "navigationTiming": {
+        "name": "http://127.0.0.1:8767/docs",
+        "entryType": "navigation",
+        "startTime": 0,
+        "duration": 132,
+        "initiatorType": "navigation",
+        "nextHopProtocol": "http/1.1",
+        "workerStart": 0,
+        "redirectStart": 0,
+        "redirectEnd": 0,
+        "fetchStart": 3,
+        "domainLookupStart": 3,
+        "domainLookupEnd": 3,
+        "connectStart": 3,
+        "connectEnd": 3,
+        "secureConnectionStart": 0,
+        "requestStart": 4,
+        "finalResponseHeadersStart": 5,
+        "firstInterimResponseStart": 0,
+        "responseStart": 5,
+        "responseEnd": 5,
+        "transferSize": 1311,
+        "encodedBodySize": 1011,
+        "decodedBodySize": 1011,
+        "workerRouterEvaluationStart": 0,
+        "workerCacheLookupStart": 0,
+        "workerMatchedRouterSource": "",
+        "workerFinalRouterSource": "",
+        "deliveryType": "",
+        "serverTiming": [],
+        "unloadEventStart": 0,
+        "unloadEventEnd": 0,
+        "domInteractive": 130,
+        "domContentLoadedEventStart": 130,
+        "domContentLoadedEventEnd": 130,
+        "domComplete": 131,
+        "loadEventStart": 132,
+        "loadEventEnd": 132,
+        "type": "navigate",
+        "redirectCount": 0
+      }
+    }
+  ],
+  "externalRequestsBlocked": [
+    {
+      "browser": "firefox",
+      "host": "fastapi.tiangolo.com",
+      "pathname": "/img/favicon.png"
+    }
+  ],
+  "ended_utc": "2026-10-03T01:40:45.527Z"
+}

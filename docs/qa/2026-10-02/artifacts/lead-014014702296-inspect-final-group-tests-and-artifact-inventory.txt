@@ -1,0 +1,461 @@
+"""2026-10-02 QA: real auth boundaries and security regression specifications.
+
+All state is synthetic and in-memory. The application lifespan is deliberately
+not entered. Known defects are strict xfails linked to the QA findings report.
+"""
+
+import csv
+import io
+import secrets
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import httpx
+import pytest
+import pytest_asyncio
+from fastapi import FastAPI
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.auth import generate_api_key, hash_key
+from app.config import settings
+from app.db import Base, get_db
+from app.models import ApiKey, Approval, ApproverContact, AuditEvent, Tenant, WebhookEndpoint
+from app.routers import approvals, audit, tenants, twilio_webhooks, webhooks
+from app.services import onboarding
+from app.services.contacts import destination_hash
+
+
+@pytest_asyncio.fixture
+async def qa_api(monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", secrets.token_hex(32))
+    monkeypatch.setattr(settings, "TSA_URL", "")
+    monkeypatch.setattr(settings, "DEFAULT_APPROVERS", "")
+
+    async def no_side_effects(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(approvals, "notify_decision", no_side_effects)
+    monkeypatch.setattr(approvals, "dispatch_approval_webhook", no_side_effects)
+    monkeypatch.setattr(
+        "app.services.approval_service.dispatch_approval_notifications", no_side_effects
+    )
+    monkeypatch.setattr(tenants, "rate_limit", no_side_effects)
+    monkeypatch.setattr(tenants, "send_recovery_email", no_side_effects)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    keys = {}
+    async with factory() as session:
+        for name in ("owner", "other"):
+            tenant_id = f"ten_qa_{name}"
+            session.add(
+                Tenant(id=tenant_id, name=name, email=f"{name}@example.invalid", mode="test")
+            )
+            await session.flush()
+            raw, prefix, key_hash = generate_api_key(mode="test")
+            keys[name] = raw
+            session.add(ApiKey(tenant_id=tenant_id, key_hash=key_hash, prefix=prefix))
+            session.add(
+                ApproverContact(
+                    id=f"con_qa_{name}", tenant_id=tenant_id, channel="sms",
+                    destination="+15551230000", destination_hash=destination_hash("+15551230000"),
+                    destination_last4="0000", consent_status="active", consent_source="qa",
+                )
+            )
+        raw, prefix, key_hash = generate_api_key(mode="test")
+        keys["revoked"] = raw
+        session.add(
+            ApiKey(
+                tenant_id="ten_qa_owner", key_hash=key_hash, prefix=prefix,
+                revoked_at=datetime.now(UTC).replace(tzinfo=None),
+            )
+        )
+        session.add(
+            Approval(id="act_qa_owner", tenant_id="ten_qa_owner", function_name="qa_action")
+        )
+        session.add(
+            WebhookEndpoint(
+                id="whk_qa_owner", tenant_id="ten_qa_owner",
+                url="https://example.invalid/hook", secret=secrets.token_hex(32),
+            )
+        )
+        await session.commit()
+
+    async def database():
+        async with factory() as session:
+            yield session
+
+    app = FastAPI()
+    app.include_router(approvals.router, prefix="/v1/approvals")
+    app.include_router(audit.router, prefix="/v1/audit-events")
+    app.include_router(tenants.router, prefix="/v1/tenants")
+    app.include_router(webhooks.router, prefix="/v1/webhooks")
+    app.include_router(twilio_webhooks.router)
+    app.dependency_overrides[get_db] = database
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://qa.local") as client:
+            yield SimpleNamespace(client=client, sessions=factory, keys=keys)
+    finally:
+        await engine.dispose()
+
+
+def bearer(qa_api, name="owner"):
+    return {"Authorization": [REDACTED]"Bearer {qa_api.keys[name]}"}
+
+
+@pytest.mark.parametrize("identity", ["other", "revoked", "invalid", "missing"])
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("GET", "/v1/approvals/act_qa_owner", None),
+        ("GET", "/v1/approvals/act_qa_owner/wait?timeout=1", None),
+        ("POST", "/v1/approvals/act_qa_owner/decision",
+         {"decision": "approved", "decided_by": "qa"}),
+        ("POST", "/v1/audit-events",
+         {"action_id": "act_qa_owner", "execution_result": "qa"}),
+        ("DELETE", "/v1/webhooks/whk_qa_owner", None),
+    ],
+)
+async def test_auth_permissions_matrix_preserves_foreign_state(qa_api, identity, method, path, payload):
+    headers = {} if identity == "missing" else (
+        {"Authorization": "Bearer [REDACTED]"} if identity == "invalid"
+        else bearer(qa_api, identity)
+    )
+    response = await qa_api.client.request(method, path, json=payload, headers=headers)
+    expected = 404 if identity == "other" else (422 if identity == "missing" else 401)
+    assert response.status_code == expected
+    async with qa_api.sessions() as session:
+        assert (await session.get(Approval, "act_qa_owner")).decision == "pending"
+        assert (await session.get(WebhookEndpoint, "whk_qa_owner")).disabled_at is None
+        assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 0
+
+
+async def test_same_idempotency_key_is_isolated_between_real_authenticated_tenants(qa_api):
+    payload = {"function_name": "qa_action", "approvers": ["qa@example.invalid"]}
+    responses = []
+    for name in ("owner", "other"):
+        headers = {**bearer(qa_api, name), "Idempotency-Key": "qa-shared-key"}
+        first = await qa_api.client.post("/v1/approvals", json=payload, headers=headers)
+        replay = await qa_api.client.post("/v1/approvals", json=payload, headers=headers)
+        assert first.status_code == replay.status_code == 200
+        assert first.json() == replay.json()
+        assert first.json()["tenant_id"] == f"ten_qa_{name}"
+        responses.append(first.json())
+    assert responses[0]["id"] != responses[1]["id"]
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-001: recovery token can rotate keys repeatedly")
+async def test_recovery_token_is_single_use_and_preserves_first_recovered_key(qa_api):
+    token = onboarding.create_token("recover", "ten_qa_owner", ttl_seconds=300)
+    first = await qa_api.client.post("/v1/tenants/recover/exchange", json={"token": token})
+    if first.status_code != 200:
+        pytest.fail("Recovery precondition failed: first valid exchange did not succeed")
+    recovered_hash = hash_key(first.json()["api_key"])
+    replay = await qa_api.client.post("/v1/tenants/recover/exchange", json={"token": token})
+    async with qa_api.sessions() as session:
+        recovered = await session.scalar(select(ApiKey).where(ApiKey.key_hash == recovered_hash))
+        unchanged = recovered.revoked_at is None
+    assert (replay.status_code in (400, 401, 409), unchanged) == (True, True)
+
+
+@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason="BE-002: onboarding accepts the known weak signing default")
+def test_onboarding_rejects_weak_signing_configuration(monkeypatch):
+    # Exercise the actual configured default without printing or minting a token.
+    weak_default = type(settings).model_fields["JWT_SECRET"].default
+    monkeypatch.setattr(settings, "JWT_SECRET", weak_default)
+    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+        onboarding._sign("qa-non-token-payload")
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1/hook", "http://10.0.0.1/hook", "http://[::1]/hook"])
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-003: private webhook targets are accepted without an egress guard")
+async def test_webhook_registration_rejects_private_network_targets(qa_api, url):
+    # Registration alone has no outbound request. Never resolve or call the URL.
+    response = await qa_api.client.post("/v1/webhooks", json={"url": url}, headers=bearer(qa_api))
+    if response.status_code not in (200, 400, 422):
+        pytest.fail("Webhook registration failed outside the destination-validation boundary")
+    assert response.status_code in (400, 422)
+
+
+@pytest.mark.parametrize(
+    "path", ["/v1/approvals/act_qa_owner/token-decision",
+             "/v1/tenants/recover/exchange", "/v1/tenants/verify-email"],
+)
+@pytest.mark.parametrize("token", ["", "without-dot", "payload.bad-signature"])
+async def test_malformed_ascii_token_classes_fail_closed(qa_api, path, token):
+    response = await qa_api.client.post(path, json={"token": token})
+    assert response.status_code in (400, 401)
+
+
+@pytest.mark.parametrize(
+    "path", ["/v1/approvals/act_qa_owner/token-decision",
+             "/v1/tenants/recover/exchange", "/v1/tenants/verify-email"],
+)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-004: non-ASCII token signatures produce HTTP 500")
+async def test_unicode_token_signature_is_a_client_error(qa_api, path):
+    response = await qa_api.client.post(path, json={"token": "invalid.\N{SNOWMAN}"})
+    assert response.status_code in (400, 401)
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-005: recovery emits a live key prefix for a test workspace")
+async def test_recovered_key_keeps_test_workspace_mode(qa_api):
+    token = onboarding.create_token("recover", "ten_qa_owner", ttl_seconds=300)
+    response = await qa_api.client.post("/v1/tenants/recover/exchange", json={"token": token})
+    if response.status_code != 200:
+        pytest.fail("Recovery precondition failed: valid exchange did not succeed")
+    has_test_prefix = response.json()["api_key"].startswith("sk_test_")
+    assert has_test_prefix
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-006: fallback SMS approvers skip create-time consent validation")
+async def test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver(qa_api):
+    destination = "sms:+15551234567"
+    payload = {"function_name": "qa_action", "approvers": [destination]}
+    explicit = await qa_api.client.post("/v1/approvals", json=payload, headers=bearer(qa_api))
+    if explicit.status_code != 400:
+        pytest.fail("Consent precondition failed: explicit unconsented destination was not rejected")
+    settings_response = await qa_api.client.patch(
+        "/v1/tenants/me", json={"default_approvers": [destination]}, headers=bearer(qa_api)
+    )
+    if settings_response.status_code != 200:
+        pytest.fail("Consent precondition failed: default approver setting was not saved")
+    fallback = await qa_api.client.post(
+        "/v1/approvals", json={"function_name": "qa_action"}, headers=bearer(qa_api)
+    )
+    assert fallback.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [True, pytest.param(False, marks=pytest.mark.xfail(
+        strict=True, raises=AssertionError,
+        reason="BE-007: absent Twilio auth configuration accepts unsigned mutations"
+    ))],
+)
+async def test_unsigned_twilio_callback_cannot_change_multiple_tenants(qa_api, monkeypatch, configured):
+    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", secrets.token_hex(32) if configured else "")
+    response = await qa_api.client.post(
+        "/webhooks/twilio/inbound", data={"From": "+15551230000", "Body": "STOP"}
+    )
+    async with qa_api.sessions() as session:
+        contacts = (await session.scalars(select(ApproverContact))).all()
+        unchanged = all(contact.consent_status == "active" for contact in contacts)
+    assert (response.status_code in (401, 503), unchanged) == (True, True)
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-008: audit CSV exports untrusted formula cells unchanged")
+async def test_audit_csv_neutralizes_spreadsheet_formula_cells(qa_api):
+    response = await qa_api.client.post(
+        "/v1/audit-events",
+        json={"action_id": "act_qa_owner", "execution_result": "failed", "error": "=1+1"},
+        headers=bearer(qa_api),
+    )
+    if response.status_code != 200:
+        pytest.fail("CSV precondition failed: synthetic audit event could not be created")
+    exported = await qa_api.client.get("/v1/audit-events.csv", headers=bearer(qa_api))
+    if exported.status_code != 200:
+        pytest.fail("CSV precondition failed: audit export could not be fetched")
+    rows = list(csv.DictReader(io.StringIO(exported.text)))
+    if len(rows) != 1:
+        pytest.fail("CSV precondition failed: expected exactly one synthetic event")
+    assert rows[0]["error"].startswith("'=")
+"""Executable checks for the public, local-only onboarding examples."""
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+from app.schemas import ApprovalCreate, DecisionRequest, TenantSignup
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    ("index", "schema"),
+    [(0, TenantSignup), (1, ApprovalCreate), (2, DecisionRequest)],
+)
+def test_readme_quickstart_payload_matches_public_model(index, schema):
+    examples = re.findall(r"-d '({.*?})'", (ROOT / "README.md").read_text(), re.DOTALL)
+    payload = schema.model_validate(json.loads(examples[index]))
+    if isinstance(payload, TenantSignup):
+        assert payload.mode == "test", "The local quickstart must suppress real notifications"
+
+
+@pytest.mark.xfail(strict=True, reason="UX-002: CONTRIBUTING names a nonexistent test file")
+def test_contributing_single_file_test_example_exists():
+    paths = re.findall(r"pytest\s+(tests/[\w./-]+\.py)", (ROOT / "CONTRIBUTING.md").read_text())
+    assert paths, "Expected an executable single-file pytest example"
+    for path in paths:
+        assert (ROOT / path).is_file(), f"Documented test file does not exist: {path}"
+# Frontend QA pass — API consumer contract substitute
+
+There is no product frontend in this repository. This pass substitutes the API integration consumer lens: generated clients, machine-readable schemas, HTTP errors, and export semantics. Swagger UI accessibility and screenshots belong to the separate UX pass.
+
+## Charter FE-C1 — 20 minutes
+
+Started 2026-10-03 01:35 UTC. Inspect the generated and committed OpenAPI documents against actual handlers. Exercise boundary/equivalence classes and response shapes for the approval workflow and audit export. Highest risk: downstream approval consumers accept a schema-valid request that runtime rejects, or cannot type/check a response. Follow the test pyramid: focused schema checks and local ASGI integration tests, without provider or database network access.
+
+## Charter FE-C2 — 10 minutes
+
+After FE-C1, probe malformed JSON/query/body errors, empty list/pagination semantics, and export media types. Verify response details can be consumed consistently. Add strict expected-failure regressions for proven contract defects and passing guards for confirmed behavior.
+
+## Safety and isolation
+
+- Checkout verified at `/Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api`, branch `qa/2026-10-02-sweep`, origin `PetrefiedThunder/sentinel-api`.
+- Only this log and `tests/test_qa_contract.py` are owned by this pass. Product code is read only.
+- New HTTP tests use `httpx.ASGITransport`, no application lifespan, isolated in-memory SQLite, and notification stubs plus outbound socket guards.
+- No environment or credential files are read; no production URLs are contacted.
+- Commands and exact outcomes are recorded by `run.py` in `frontend-commands.jsonl`, linked artifacts, and the consolidated session log.
+
+## Session notes
+
+- 2026-10-03 01:35 UTC: scoped instruction/file scan attempted `tests/conftest.py`, which does not exist; located the actual shared harness at `tests/test_support.py`. No pytest fixture discovery file exists in the inspected test inventory.
+- 2026-10-03 01:35 UTC: inspected schemas, routes, shared harness, CI contract gate, and existing schema coverage. An inventory search included absent `scripts/`; the remaining read commands completed and the missing path was logged (exit 2).
+- 2026-10-03 01:36 UTC: created this charter/log using `apply_patch`; no runtime execution yet while the lead prepares the isolated dependency environment.
+- 2026-10-03 01:36 UTC: checked route metadata annotations; `rg` found no `response_model`, `response_class`, or explicit `responses` annotation in the router inventory (expected no-match exit 1). The application settings type enables automatic `.env` reads, so runtime tests waited for the lead's bootstrap that disables this before imports.
+- 2026-10-03 01:37 UTC: added `tests/test_qa_contract.py` via `apply_patch`, preserving product behavior. The lead's isolated dependency environment became available; ran the targeted pass through `pytest_safe.py` with no network sockets or `.env` loading. **22 passed, 3 xfailed** in 0.69 seconds. The 25 warnings concern existing SQLAlchemy defaults calling deprecated `datetime.utcnow`.
+- 2026-10-03 01:37 UTC: disabled expected-failure markers for the three reproductions only. **3 failed, 22 deselected**, each at the specific contract assertion. This is intentional defect confirmation; the committed tests retain strict expected-failure markers. Added-test Ruff check passed.
+- 2026-10-03 01:38 UTC: compared runtime schema with committed baseline: **24 paths, 29 operations, zero added/removed operations, zero differing JSON pointers**. **28 success responses have the unconstrained schema `{}`**. This proves the missing information already exists in the baseline; the sweep did not introduce schema drift.
+- 2026-10-03 01:39 UTC: FE-C1 and FE-C2 completed inside their maximum timeboxes. Ordinary malformed payload/query handling, empty pagination, response aliases, and CSV quoting worked for the exercised cases. No frontend assets/build/component suite exist to exercise. Browser accessibility/performance/screenshots are covered by the UX owner's separate pass.
+- 2026-10-03 01:39 UTC: independent gate review suggested exposing every known missing schema independently and narrowing xfails. Applied test-only refinements: four parameterized approval responses, three request-constraint cases, `raises=AssertionError` on all xfails, and a non-xfail CSV status precondition. Final targeted run: **22 passed, 8 xfailed** in 0.68 seconds; Ruff passed. With `--runxfail`, **8 failed, 22 deselected**, each at its intended gap. These are still three findings, not eight separate defects.
+
+## Findings handoff
+
+All three findings are **Medium**, group **Frontend (API consumer substitute)**. No product fixes were applied. Run reproduction commands from the repository root through the QA command recorder; `pytest_safe.py` disables environment-file reads and all TCP sockets. Commands below only address local ASGI/in-memory fixtures.
+
+| ID | Title | Exact reproduction | Expected vs actual | Evidence | Suggested fix |
+| --- | --- | --- | --- | --- | --- |
+| FE-001 | OpenAPI omits the approval response contract | `.venv/bin/python docs/qa/2026-10-02/pytest_safe.py tests/test_qa_contract.py::test_openapi_types_primary_approval_responses --no-cov --runxfail -q` | Expected typed success bodies including `action_id`/`status` and the list-or-page envelope. Actual POST/list/get/wait advertise `{}`, allowing any JSON value and providing no field protection to the schema breaking-change gate. Runtime approval aliases do exist and passed a separate smoke test. | `app/routers/approvals.py:59`, `:98`, `:130`; `tests/test_qa_contract.py:90`; [contract audit](artifacts/frontend-contract-audit.json); [unmasked reproductions](artifacts/frontend-013757708485-confirm-three-contract-defects-with-expected-failure-marks-disabled.txt). Audit quantifies 28 unconstrained success schemas across 29 operations. | Define and attach accurate response models, retaining **both** legacy `id`/`decision` and consumer `action_id`/`status` fields. Type the array-or-page union for list endpoints. Regenerate the baseline in a coordinated product-fix PR; the existing unused `ApprovalResponse` lacks aliases and must not be attached unchanged. |
+| FE-002 | Runtime bounds and enum choices are absent from the request schema | `.venv/bin/python docs/qa/2026-10-02/pytest_safe.py tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints --no-cov --runxfail -q`; inspect `ApprovalCreate` and `TenantSignup` in the audit artifact | Expected timeout minimum 1/maximum 86400, risk enum low/medium/high/critical, and workspace mode live/test in machine-readable schemas. Actual properties are only integer/string; clients can validate invalid inputs against OpenAPI and still receive 422. New invalid risk cases returned the expected runtime 422. | `app/schemas.py:24`, `:42`, `:44`, `:57`, `:64`; `tests/test_qa_contract.py:103`; [contract audit](artifacts/frontend-contract-audit.json). Existing timeout behavior is independently pinned by `tests/test_middleware_contract.py::test_timeout_seconds_bounds_are_1_to_86400`. | Publish equivalent constraints using Pydantic `Field(ge=1, le=86400)` and `Literal`/enum types, or explicit JSON-schema metadata if preserving exact validation messages. Preserve current accepted values and coordinated baseline updates. |
+| FE-003 | CSV download is documented as JSON | `.venv/bin/python docs/qa/2026-10-02/pytest_safe.py tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime --no-cov --runxfail -q` | Expected the successful response to declare `text/csv`; actual runtime returns `text/csv; charset=utf-8` with CSV text while OpenAPI declares only `application/json`. A client generated from this contract can choose a JSON decoder for a CSV body. | `app/routers/audit.py:136`, `:190`; `tests/test_qa_contract.py:117`; [unmasked reproductions](artifacts/frontend-013757708485-confirm-three-contract-defects-with-expected-failure-marks-disabled.txt). | Declare the CSV response class/media type and a string/binary response schema in route metadata. Keep the current runtime CSV contract and attachment filename intact. |
+
+## Coverage and limitations
+
+- Added 30 cases: **22 passing and 8 strict xfails across three findings**. The lead owns full-suite before/after coverage; this pass deliberately used `--no-cov` to avoid concurrent coverage-file collisions.
+- Passing checks cover all baseline route/method registrations, creation/get aliases, empty page envelope, four invalid timeout scalar classes, four invalid risk strings, five malformed cursor classes against both list APIs, malformed JSON, and CSV comma/quote/newline/Unicode round-tripping.
+- New tests use overridden authentication to isolate the integration contract; they do **not** establish authentication/tenant security. The Backend pass owns that matrix.
+- PostgreSQL LISTEN/NOTIFY, provider callbacks, real generated SDK execution, and full streaming memory/performance are untested in this pass. SQLite and ASGI cannot prove those production behaviors.
+- The JSON equality audit is a complete baseline/current document comparison, not an execution of the external `oasdiff` binary. It establishes no schema drift under the installed dependency versions; it cannot detect fields absent from both documents.
+
+## Evidence
+
+- [Final passing contract suite and Ruff check](artifacts/frontend-013957506648-verify-gate-refined-parametrized-contracts-and-lint.txt)
+- [Final independent failing reproductions for all eight gaps](artifacts/frontend-013957506871-confirm-every-documented-contract-gap-independently.txt)
+- [Runtime/baseline comparison output](artifacts/frontend-013819780300-compare-runtime-openapi-contract-to-committed-baseline-without-network.txt)
+- [Machine-readable schema audit](artifacts/frontend-contract-audit.json)
+- [Every frontend command, UTC start/end, exit status, and artifact](frontend-commands.jsonl)
+
+PR: opened by orchestrator
+
+CI status: pending at time of writing
+docs/qa/2026-10-02/FRONTEND-LOG.md
+docs/qa/2026-10-02/PLAN.md
+docs/qa/2026-10-02/UX-LOG.md
+docs/qa/2026-10-02/artifacts/backend-013523931810-verify-repository-and-inspect-backend-configuration.txt
+docs/qa/2026-10-02/artifacts/backend-013535469879-read-backend-models-configuration-and-approval-routes.txt
+docs/qa/2026-10-02/artifacts/backend-013539692676-inspect-decision-service-and-replay-coverage-for-risk-charter.txt
+docs/qa/2026-10-02/artifacts/backend-013540841452-security-verify-checkout-identity-prior-wrapper-attempt-rejected-unsupported-backend-security-group-without-executing-inner-command.txt
+docs/qa/2026-10-02/artifacts/backend-013544618054-inspect-deadlines-notification-consent-and-test-patterns.txt
+docs/qa/2026-10-02/artifacts/backend-013544981109-security-inspect-auth-tenant-admin-router-implementation.txt
+docs/qa/2026-10-02/artifacts/backend-013547853643-security-inspect-audit-webhook-and-onboarding-boundaries.txt
+docs/qa/2026-10-02/artifacts/backend-013554715268-inspect-local-fixtures-and-documented-timeout-recovery-contracts.txt
+docs/qa/2026-10-02/artifacts/backend-013558598215-security-inspect-fixtures-model-constraints-inbound-callbacks-rate-limiter-and-app-boundaries.txt
+docs/qa/2026-10-02/artifacts/backend-013601815894-security-locate-fixtures-and-inspect-models-callbacks-limits-app-configuration-source-only.txt
+docs/qa/2026-10-02/artifacts/backend-013607001588-review-token-safety-and-middleware-contract-limits.txt
+docs/qa/2026-10-02/artifacts/backend-013620483871-security-inspect-signing-guards-and-callback-tests-for-documented-threat-model.txt
+docs/qa/2026-10-02/artifacts/backend-013626281103-inspect-webhook-validation-and-existing-boundary-tests.txt
+docs/qa/2026-10-02/artifacts/backend-013647886646-security-offline-function-level-confirmation-of-webhook-destination-validation-and-missing-twilio-configuration.txt
+docs/qa/2026-10-02/artifacts/backend-013659497589-security-offline-onboarding-weak-signing-guard-comparison-and-audit-hash-coverage-inspection.txt
+docs/qa/2026-10-02/artifacts/backend-013720281133-security-inspect-remaining-tenant-permission-queries-and-purge-regression-coverage.txt
+docs/qa/2026-10-02/artifacts/backend-013729579558-inspect-twilio-fail-open-and-existing-negative-path-coverage.txt
+docs/qa/2026-10-02/artifacts/backend-013737831714-security-offline-webhook-delivery-sink-and-response-disclosure-confirmation.txt
+docs/qa/2026-10-02/artifacts/backend-013749991299-run-backend-auth-boundary-and-known-defect-regression-suite.txt
+docs/qa/2026-10-02/artifacts/backend-013801348874-security-offline-csv-formula-neutralization-check.txt
+docs/qa/2026-10-02/artifacts/backend-013811784440-confirm-known-backend-defects-without-expected-failure-masking.txt
+docs/qa/2026-10-02/artifacts/backend-013839758102-lint-the-added-backend-qa-tests.txt
+docs/qa/2026-10-02/artifacts/backend-013855727535-verify-final-focused-backend-suite-and-expected-failures.txt
+docs/qa/2026-10-02/artifacts/backend-013855727548-capture-exact-backend-finding-source-references.txt
+docs/qa/2026-10-02/artifacts/backend-013936645999-read-backend-utc-ledger-and-inspect-narrowed-xfails.txt
+docs/qa/2026-10-02/artifacts/bandit.json
+docs/qa/2026-10-02/artifacts/bootstrap.json
+docs/qa/2026-10-02/artifacts/coverage-before.json
+docs/qa/2026-10-02/artifacts/frontend-013535003564-verify-checkout-identity-and-branch.txt
+docs/qa/2026-10-02/artifacts/frontend-013538825125-read-scoped-instructions-and-integration-code-map.txt
+docs/qa/2026-10-02/artifacts/frontend-013542574807-inspect-router-and-test-inventory.txt
+docs/qa/2026-10-02/artifacts/frontend-013546791381-read-public-contract-handlers-and-safe-local-fixture.txt
+docs/qa/2026-10-02/artifacts/frontend-013552621784-inspect-api-baseline-and-boundary-coverage.txt
+docs/qa/2026-10-02/artifacts/frontend-013624067784-inspect-existing-consumer-contract-cases-and-generated-schema-baseline-structure.txt
+docs/qa/2026-10-02/artifacts/frontend-013636668772-inspect-command-safety-wrapper-and-schema-import-path.txt
+docs/qa/2026-10-02/artifacts/frontend-013749609507-run-isolated-api-consumer-contract-tests.txt
+docs/qa/2026-10-02/artifacts/frontend-013757708417-lint-added-consumer-contract-tests.txt
+docs/qa/2026-10-02/artifacts/frontend-013757708485-confirm-three-contract-defects-with-expected-failure-marks-disabled.txt
+docs/qa/2026-10-02/artifacts/frontend-013804514981-read-safe-runtime-bootstrap-and-capture-contract-source-locations.txt
+docs/qa/2026-10-02/artifacts/frontend-013819780300-compare-runtime-openapi-contract-to-committed-baseline-without-network.txt
+docs/qa/2026-10-02/artifacts/frontend-013957506648-verify-gate-refined-parametrized-contracts-and-lint.txt
+docs/qa/2026-10-02/artifacts/frontend-013957506871-confirm-every-documented-contract-gap-independently.txt
+docs/qa/2026-10-02/artifacts/frontend-contract-audit.json
+docs/qa/2026-10-02/artifacts/gate-013831725346-verify-checkout-and-files.txt
+docs/qa/2026-10-02/artifacts/gate-013836881498-read-review-skills-and-qa-harness.txt
+docs/qa/2026-10-02/artifacts/gate-013845230669-read-qa-tests-and-plan.txt
+docs/qa/2026-10-02/artifacts/gate-013851293364-inspect-security-implementation-and-fixture-conventions.txt
+docs/qa/2026-10-02/artifacts/gate-013855865890-inspect-startup-and-token-safety-contracts.txt
+docs/qa/2026-10-02/artifacts/gate-013906680035-independent-qa-security-and-contract-tests.txt
+docs/qa/2026-10-02/artifacts/gate-013921473804-negative-control-validate-exact-known-failures.txt
+docs/qa/2026-10-02/artifacts/gate-013941427349-review-qa-artifacts-inventory-and-dx-tests.txt
+docs/qa/2026-10-02/artifacts/gitleaks-tracked.json
+docs/qa/2026-10-02/artifacts/junit-before.xml
+docs/qa/2026-10-02/artifacts/lead-013505450945-inspect-project-metadata-and-test-layout.txt
+docs/qa/2026-10-02/artifacts/lead-013541314345-tool-availability-and-safe-tracked-secret-detection.txt
+docs/qa/2026-10-02/artifacts/lead-013541314774-read-safety-boundaries-and-test-setup.txt
+docs/qa/2026-10-02/artifacts/lead-013553959903-read-ci-and-isolated-test-prerequisites.txt
+docs/qa/2026-10-02/artifacts/lead-013554080921-create-isolated-qa-environment-and-install-test-tools.txt
+docs/qa/2026-10-02/artifacts/lead-013727353610-baseline-complete-existing-test-suite.txt
+docs/qa/2026-10-02/artifacts/lead-013748400456-static-mypy-application.txt
+docs/qa/2026-10-02/artifacts/lead-013748400588-static-bandit-application.txt
+docs/qa/2026-10-02/artifacts/lead-013748400985-static-ruff-existing-repository.txt
+docs/qa/2026-10-02/artifacts/lead-013748402529-installed-dependency-inventory.txt
+docs/qa/2026-10-02/artifacts/lead-013748403451-public-package-vulnerability-audit.txt
+docs/qa/2026-10-02/artifacts/lead-013801535045-record-bootstrap-dead-end-and-classify-fixture-safely.txt
+docs/qa/2026-10-02/artifacts/lead-013905527611-review-remaining-security-surfaces-and-package-advisory-totals.txt
+docs/qa/2026-10-02/artifacts/lead-013905527677-credential-safe-tracked-text-secret-scan.txt
+docs/qa/2026-10-02/artifacts/lead-013937147339-classify-redacted-secret-scan-candidate-and-format-qa-harness.txt
+docs/qa/2026-10-02/artifacts/lead-013937292760-locate-ci-python-version-locally.txt
+docs/qa/2026-10-02/artifacts/lead-013955984492-inspect-scanner-config-and-fixture-metadata-without-values.txt
+docs/qa/2026-10-02/artifacts/lead-013955985047-ci-python-3-11-isolated-environment.txt
+docs/qa/2026-10-02/artifacts/lead-014002706503-check-existing-secret-scan-allowance-and-current-tracked-paths.txt
+docs/qa/2026-10-02/artifacts/pip-audit.json
+docs/qa/2026-10-02/artifacts/ux-013542215658-verify-checkout-and-inspect-ux-surfaces.txt
+docs/qa/2026-10-02/artifacts/ux-013547474462-read-ui-automation-skill-and-api-lifecycle-for-safe-docs-harness.txt
+docs/qa/2026-10-02/artifacts/ux-013557115658-inspect-dx-contracts-and-install-public-browser-tooling.txt
+docs/qa/2026-10-02/artifacts/ux-013602777371-retry-browser-tool-install-with-writable-cache-and-inspect-test-bootstrap.txt
+docs/qa/2026-10-02/artifacts/ux-013626442397-check-qa-environment-and-source-references-for-dx-checks.txt
+docs/qa/2026-10-02/artifacts/ux-013723342512-render-isolated-docs-and-run-browser-accessibility-and-viewport-charter.txt
+docs/qa/2026-10-02/artifacts/ux-013738884721-reproduce-contributor-install-in-isolated-public-package-environment.txt
+docs/qa/2026-10-02/artifacts/ux-013809366294-verify-documentation-links-and-packaging-evidence.txt
+docs/qa/2026-10-02/artifacts/ux-013829592601-run-readme-payload-and-expected-failure-contributor-regression-checks.txt
+docs/qa/2026-10-02/artifacts/ux-013848818006-diagnose-local-docs-harness-readiness-without-external-requests.txt
+docs/qa/2026-10-02/artifacts/ux-013906899774-diagnose-swagger-asset-parse-failure.txt
+docs/qa/2026-10-02/artifacts/ux-013914024522-repeat-local-docs-browser-charter-with-correct-utf-8-asset-headers.txt
+docs/qa/2026-10-02/artifacts/ux-013935639836-read-release-safety-reference-and-exact-documentation-lines.txt
+docs/qa/2026-10-02/artifacts/ux-013958378232-repeat-cross-browser-docs-smoke-preserving-original-http-charset.txt
+docs/qa/2026-10-02/artifacts/ux-014011138404-inspect-exact-accessibility-failures-and-screenshot-sizes.txt
+docs/qa/2026-10-02/artifacts/ux-browser-report.json
+docs/qa/2026-10-02/artifacts/ux-chromium-approval-expanded.png
+docs/qa/2026-10-02/artifacts/ux-chromium-desktop.png
+docs/qa/2026-10-02/artifacts/ux-chromium-mobile.png
+docs/qa/2026-10-02/artifacts/ux-firefox-desktop.png
+docs/qa/2026-10-02/artifacts/ux-webkit-desktop.png
+docs/qa/2026-10-02/backend-commands.jsonl
+docs/qa/2026-10-02/frontend-commands.jsonl
+docs/qa/2026-10-02/gate-commands.jsonl
+docs/qa/2026-10-02/lead-commands.jsonl
+docs/qa/2026-10-02/pytest_safe.py
+docs/qa/2026-10-02/run.py
+docs/qa/2026-10-02/ux-commands.jsonl
+docs/qa/2026-10-02/ux_browser.cjs
+docs/qa/2026-10-02/ux_browser.py

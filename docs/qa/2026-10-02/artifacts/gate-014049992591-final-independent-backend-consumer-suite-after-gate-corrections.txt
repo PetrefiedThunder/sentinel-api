@@ -1,0 +1,7 @@
+.....................xxxxx.........xxxxx.xx.xxxxxxxx.................... [ 98%]
+.                                                                        [100%]
+53 passed, 20 xfailed, 504 warnings in 1.40s
+?? docs/qa/
+?? tests/test_qa_backend.py
+?? tests/test_qa_contract.py
+?? tests/test_qa_dx.py

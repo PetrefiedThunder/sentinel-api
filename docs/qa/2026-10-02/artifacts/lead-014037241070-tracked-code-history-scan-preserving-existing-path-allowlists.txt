@@ -1,0 +1,7 @@
+[90m6:40PM[0m [31mERR[0m [1m[git] fatal: Unable to create temporary file '/Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.git/objects/pack/tmp_pack_XXXXXX': Operation not permitted[0m
+[90m6:40PM[0m [31mERR[0m [1m[git] fatal: index-pack failed[0m
+[90m6:40PM[0m [31mERR[0m [1m[git] fatal: could not fetch ba967f7f78d208350b4529e57693ef71190c6ea0 from promisor remote[0m
+[90m6:40PM[0m [31mERR[0m [36merror=[0m[31m[1m"stderr is not empty"[0m[0m
+[90m6:40PM[0m [32mINF[0m [1m0 commits scanned.[0m
+[90m6:40PM[0m [32mINF[0m [1mscanned ~0 bytes (0) in 342ms[0m
+[90m6:40PM[0m [32mINF[0m [1mno leaks found[0m

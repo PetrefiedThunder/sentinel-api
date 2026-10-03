@@ -1,0 +1,186 @@
+"""Coverage for app/routers/tenants.py — signup, verify-email, recover, me/update.
+
+The tenants router has dependencies that aren't overridden by client_for
+(it uses get_db directly, not get_current_tenant for signup/verify/recover).
+Rate limiting fails open without Redis, and welcome/recovery emails are
+background tasks that no-op without RESEND_API_KEY.
+"""
+from sqlalchemy import select
+from test_support import client_for, make_sqlite_session, run
+
+from app.models import ApiKey
+from app.services.onboarding import create_token
+
+
+def test_signup_rejects_invalid_email():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post(
+                "/v1/tenants/signup", json={"name": "Acme", "email": "no-at-sign"}
+            )
+        assert resp.status_code == 400
+        assert "Invalid email" in resp.json()["detail"]
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_signup_rejects_personal_email_domain():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post(
+                "/v1/tenants/signup", json={"name": "Acme", "email": "joe@gmail.com"}
+            )
+        assert resp.status_code == 400
+        assert "Work email" in resp.json()["detail"]
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_signup_creates_test_tenant_and_api_key():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post(
+                "/v1/tenants/signup",
+                json={"name": "Acme", "email": "founder@acme.io", "mode": "test"},
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["mode"] == "test"
+        assert body["api_key"].startswith(("sk_", "pk_", "key_")) or body["api_key"]
+        # api key row was persisted for the new tenant
+        rows = run(session.execute(select(ApiKey).where(ApiKey.tenant_id == body["tenant_id"])))
+        assert len(rows.scalars().all()) == 1
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_signup_rejects_duplicate_email():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            first = client.post(
+                "/v1/tenants/signup",
+                json={"name": "Acme", "email": "dup@acme.io", "mode": "test"},
+            )
+            assert first.status_code == 200
+            second = client.post(
+                "/v1/tenants/signup",
+                json={"name": "Acme2", "email": "dup@acme.io", "mode": "test"},
+            )
+        assert second.status_code == 400
+        assert "already registered" in second.json()["detail"]
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_verify_email_with_valid_token():
+    engine, session, tenant = run(make_sqlite_session())
+    token = create_token("verify", tenant.id, ttl_seconds=3600)
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post("/v1/tenants/verify-email", json={"token": token})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tenant_id"] == tenant.id
+        assert body["email_verified_at"] is not None
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_verify_email_rejects_bad_token():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post("/v1/tenants/verify-email", json={"token": "garbage.sig"})
+        assert resp.status_code == 400
+        assert "Invalid or expired" in resp.json()["detail"]
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_verify_email_404_for_unknown_tenant():
+    engine, session, tenant = run(make_sqlite_session())
+    token = create_token("verify", "ten_does_not_exist", ttl_seconds=3600)
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post("/v1/tenants/verify-email", json={"token": token})
+        assert resp.status_code == 404
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+import asyncio
+from contextlib import contextmanager
+
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.auth import get_current_tenant
+from app.db import Base, get_db
+from app.main import app
+from app.models import Tenant
+
+TENANT_ID = "ten_test"
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+async def make_sqlite_session():
+    import app.models  # noqa: F401
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session = session_factory()
+    tenant = Tenant(id=TENANT_ID, name="Test Tenant", email="team@example.com")
+    session.add(tenant)
+    await session.commit()
+    return engine, session, tenant
+
+
+@contextmanager
+def client_for(session, tenant=None):
+    tenant = tenant or Tenant(id=TENANT_ID, name="Test Tenant", email="team@example.com")
+
+    async def override_get_db():
+        yield session
+
+    async def override_get_current_tenant():
+        return tenant
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_tenant] = override_get_current_tenant
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+docs/qa/2026-10-02/run.py:75:    env["GIT_NO_LAZY_FETCH"] = "1"
+docs/qa/2026-10-02/FINDINGS.md:6:**16 confirmed findings: Critical=0, High=4, Medium=8, Low=4.** These are local code, synthetic-data, documentation and browser results. Deployed configuration, credentials, existing databases and real providers were not inspected. No product fixes were made.
+docs/qa/2026-10-02/FINDINGS.md:18:| BE-001 | High | Backend | Recovery link remains usable after key rotation | In `test_recovery_token_is_single_use_and_preserves_first_recovered_key`, create a recovery token for the synthetic owner, POST it to `/v1/tenants/recover/exchange`, then POST the same token again; inspect the first recovered key row. | Expected: second exchange rejected and first recovered key remains active. Actual: second exchange returns 200, revokes the freshly recovered key, and issues another key. A party retaining the link can repeatedly regain access until expiry. | `app/routers/tenants.py:147`, `app/routers/tenants.py:157`; named test in `tests/test_qa_backend.py`; [unmasked failures](artifacts/backend-013811784440-confirm-known-backend-defects-without-expected-failure-masking.txt). | Consume a recovery nonce atomically with revocation/issuance; enforce uniqueness under concurrent redemption; add replay and concurrent redemption tests. |
+docs/qa/2026-10-02/FINDINGS.md:19:| BE-002 | High | Backend | Onboarding accepts known weak signing configuration | In `test_onboarding_rejects_weak_signing_configuration`, substitute the declared default signing value in memory and call onboarding's signing primitive with a non-token payload. The separate offline source-function check also round-trips a synthetic recovery token. | Expected: reject weak/default configuration, matching approval-token guard. Actual: HMAC signing and onboarding verification accept it. This can undermine recovery authentication if a deployment uses that configuration; deployment settings were not inspected. | `app/config.py:12`, `app/services/onboarding.py:23`, `app/services/approval_tokens.py:92`; named test; [isolated comparison](artifacts/backend-013659497589-security-offline-onboarding-weak-signing-guard-comparison-and-audit-hash-coverage-inspection.txt). | Apply the existing strong-secret guard to onboarding signing and verification; fail closed before recovery routes are served. |
+docs/qa/2026-10-02/FINDINGS.md:20:| BE-003 | High | Backend | Webhooks allow private destinations and retain their response text | In `test_webhook_registration_rejects_private_network_targets`, authenticate synthetic owner and register each of `http://127.0.0.1/hook`, `http://10.0.0.1/hook`, `http://[::1]/hook`. No URL is contacted. Offline execution of the delivery source with a fake HTTP client confirms destination is passed through and fake internal response is retained. | Expected: reject unsafe destinations or enforce a secure default egress policy. Actual: all registrations return 200; delivery sends directly to endpoint URL and records up to 512 response characters for tenant readback. Real network reachability and deployment egress controls are unverified. | `app/routers/webhooks.py:70`, `app/services/webhooks.py:155`, `app/services/webhooks.py:157`, `app/routers/webhooks.py:56`; named test; [mocked sink evidence](artifacts/backend-013737831714-security-offline-webhook-delivery-sink-and-response-disclosure-confirmation.txt). | Parse and validate destinations; require HTTPS by default; reject private/local/reserved resolved addresses and protect against DNS rebinding. Allow local development destinations only through explicit isolated configuration; enforce egress restrictions. |
+docs/qa/2026-10-02/FINDINGS.md:23:| BE-006 | Low | Backend | Default SMS approvers bypass creation-time consent check | In `test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver`, create with explicit unconsented synthetic SMS destination (400); save that destination through `PATCH /v1/tenants/me`; create again with approvers omitted. | Expected: same consent requirement after default resolution. Actual: fallback creation returns 200 and leaves a pending approval whose only SMS recipient will be skipped. The dispatcher still checks consent; unauthorized SMS sending is not demonstrated. | `app/routers/approvals.py:72`, `app/services/approval_service.py:34`, `app/services/notifications.py:111`; named test; [unmasked failures](artifacts/backend-013811784440-confirm-known-backend-defects-without-expected-failure-masking.txt). | Resolve caller/tenant/global recipients first, then apply the same consent validation to the resolved list before persisting. |
+docs/qa/2026-10-02/FINDINGS.md:24:| BE-007 | High | Backend | Missing Twilio authentication configuration accepts unsigned consent mutations | In `test_unsigned_twilio_callback_cannot_change_multiple_tenants[False]`, seed two tenants with the same synthetic SMS contact, set Twilio auth token empty in memory, and POST unsigned `From=+15551230000&Body=STOP` to `/webhooks/twilio/inbound`; compare contacts. Configured-secret control is included. | Expected: 401 or disabled-service 503 and unchanged contacts. Actual: 200 and both contacts revoked. With configured authentication, unsigned callback is rejected. Deployment configuration is not verified. | `app/routers/twilio_webhooks.py:21`, `app/routers/twilio_webhooks.py:78`; named test; [offline conditional guard evidence](artifacts/backend-013647886646-security-offline-function-level-confirmation-of-webhook-destination-validation-and-missing-twilio-configuration.txt). | Return 503 if webhook authentication is unconfigured; validate signatures on every enabled callback before any mutation. |
+docs/qa/2026-10-02/FINDINGS.md:25:| BE-008 | Medium | Backend | Audit CSV preserves formula cells in untrusted error text | In `test_audit_csv_neutralizes_spreadsheet_formula_cells`, emit an audit event for an owned synthetic approval with error `=1+1`, GET `/v1/audit-events.csv`, parse it with `csv.DictReader`, and inspect error cell. No spreadsheet program executes the cell. | Expected: exported untrusted text is safe to open as spreadsheet data. Actual: cell remains `=1+1`, which spreadsheet clients can interpret as a formula. Only harmless arithmetic was tested; no external-content formula was constructed. | `app/routers/audit.py:181`; named test; [offline CSV evidence](artifacts/backend-013801348874-security-offline-csv-formula-neutralization-check.txt). | Neutralize spreadsheet formula prefixes in untrusted exported text, preserving data meaning; test `=`, `+`, `-`, `@`, tab and carriage-return boundary classes. |
+docs/qa/2026-10-02/FINDINGS.md:37:A secret-exposure candidate was recorded at tests/test_coverage_onboarding.py:66 with value [REDACTED]. It is an existing synthetic welcome-email fixture, identified by its mocked sender and existing .gitleaks.toml test-fixture allowance. Concatenating tracked files to stdin removes path metadata, so the initial scan reported that placeholder. It is not counted as an exposed real credential. No ignore list or baseline was changed.
+docs/qa/2026-10-02/FINDINGS.md:39:The subsequent history scan encountered missing objects in a partial clone and attempted Git lazy retrieval, then failed on the read-only object store. It reported zero commits and an exit code of zero despite fatal errors. That result is **unverified**, not a clean history scan. The QA command wrapper now disables lazy fetches for subsequent Git operations. The orchestrator must perform its own complete diff/history secret review.
+docs/qa/2026-10-02/SUMMARY.md:46:| Keyboard / responsive / states | Enter expansion and visible focus passed; 375px mobile width without page overflow; synthetic empty/error/loading screenshots saved |
+docs/qa/2026-10-02/SUMMARY.md:48:| Secret review | Current source/artifact scans and synthetic fixture triage recorded; full history scan blocked by missing partial-clone objects |
+docs/qa/2026-10-02/SUMMARY.md:61:- **Complete secret history:** scanner scanned zero commits after a partial-clone lazy-fetch/object-store failure; exit zero was not accepted as evidence. No secret-scan ignore list or baseline was edited. Orchestrator review remains required.
+?? docs/qa/
+?? tests/test_qa_backend.py
+?? tests/test_qa_contract.py
+?? tests/test_qa_dx.py

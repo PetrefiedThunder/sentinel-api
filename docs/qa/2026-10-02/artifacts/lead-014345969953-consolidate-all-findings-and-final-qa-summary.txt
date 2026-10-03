@@ -1,0 +1,1 @@
+Created FINDINGS.md and SUMMARY.md; exact counts {'High': 4, 'Medium': 8, 'Low': 4}
