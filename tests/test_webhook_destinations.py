@@ -98,10 +98,16 @@ def deliver(monkeypatch):
             if dns_error is not None:
                 raise dns_error
             # A second DNS lookup would rebind to loopback.
-            selected = (["93.184.216.34"] if addresses is None else addresses) if len(result.dns_queries) == 1 else ["127.0.0.1"]
+            selected = (
+                (["93.184.216.34"] if addresses is None else addresses)
+                if len(result.dns_queries) == 1
+                else ["127.0.0.1"]
+            )
             return [
                 (
-                    socket.AF_INET6 if ipaddress.ip_address(address).version == 6 else socket.AF_INET,
+                    socket.AF_INET6
+                    if ipaddress.ip_address(address).version == 6
+                    else socket.AF_INET,
                     socket.SOCK_STREAM,
                     socket.IPPROTO_TCP,
                     "",
@@ -117,17 +123,24 @@ def deliver(monkeypatch):
                 result.writes.append(buffer)
 
             async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
-                result.tls.append((server_hostname, ssl_context.check_hostname, ssl_context.verify_mode))
+                result.tls.append(
+                    (server_hostname, ssl_context.check_hostname, ssl_context.verify_mode)
+                )
                 return self
 
         class Backend(httpcore.AsyncMockBackend):
             async def connect_tcp(self, host, port, **kwargs):
                 result.connections.append((host, port))
-                redirect = b"Location: https://127.0.0.1/internal\r\n" if response_status == 302 else b""
-                return Stream([
-                    f"HTTP/1.1 {response_status} Test\r\n".encode()
-                    + redirect + b"Content-Length: 2\r\n\r\nOK"
-                ])
+                redirect = (
+                    b"Location: https://127.0.0.1/internal\r\n" if response_status == 302 else b""
+                )
+                return Stream(
+                    [
+                        f"HTTP/1.1 {response_status} Test\r\n".encode()
+                        + redirect
+                        + b"Content-Length: 2\r\n\r\nOK"
+                    ]
+                )
 
         def client(**kwargs):
             result.client_options.append(kwargs.copy())
@@ -138,8 +151,11 @@ def deliver(monkeypatch):
         monkeypatch.setattr(webhooks.httpx, "AsyncClient", client)
         monkeypatch.setattr(webhooks, "BACKOFF_SECONDS", [0, 0, 0])
         approval = Approval(
-            id="act_qa", tenant_id="ten_qa", function_name="qa",
-            decision="approved", arguments={},
+            id="act_qa",
+            tenant_id="ten_qa",
+            function_name="qa",
+            decision="approved",
+            arguments={},
         )
         await webhooks._deliver_with_retries(endpoint, "approval.approved", approval)
         return result
@@ -191,8 +207,12 @@ async def test_be003_delivery_rejects_every_unsafe_dns_answer(deliver, addresses
 
 @pytest.mark.parametrize(
     "url",
-    ["http://127.0.0.1/internal", "https://10.0.0.1/internal",
-     "https://[::1]/internal", "https://user:synthetic@example.com/hook"],
+    [
+        "http://127.0.0.1/internal",
+        "https://10.0.0.1/internal",
+        "https://[::1]/internal",
+        "https://user:synthetic@example.com/hook",
+    ],
 )
 async def test_be003_legacy_unsafe_endpoint_is_blocked_before_dns(deliver, url):
     result = await deliver(url)
