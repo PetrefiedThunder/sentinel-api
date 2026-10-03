@@ -1,10 +1,36 @@
 """Coverage for app/services/onboarding.py — token round-trip + email builders."""
+import secrets
 from types import SimpleNamespace
 
 import pytest
 
 import app.services.onboarding as onboarding
 from app.config import settings
+
+
+@pytest.fixture(autouse=True)
+def strong_signing_configuration(monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", secrets.token_hex(32))
+
+
+@pytest.mark.parametrize("purpose", ["verify", "recover"])
+@pytest.mark.parametrize("configuration", ["default", "empty", "short"])
+@pytest.mark.parametrize("operation", ["sign", "verify"])
+def test_be002_onboarding_rejects_weak_signing_and_verification(
+    monkeypatch, purpose, configuration, operation
+):
+    token = onboarding.create_token(purpose, "ten_abc", ttl_seconds=3600)
+    weak_value = {
+        "default": type(settings).model_fields["JWT_SECRET"].default,
+        "empty": "",
+        "short": "short",
+    }[configuration]
+    monkeypatch.setattr(settings, "JWT_SECRET", weak_value)
+    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+        if operation == "sign":
+            onboarding.create_token(purpose, "ten_abc", ttl_seconds=3600)
+        else:
+            onboarding.verify_token(token, expected_purpose=purpose)
 
 
 def test_token_round_trip_verify():

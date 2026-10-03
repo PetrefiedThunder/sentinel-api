@@ -126,16 +126,22 @@ def test_openapi_declares_runtime_request_constraints(component, field, expected
     assert actual == expected
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="FE-003: CSV download is documented as application/json"
-)
 async def test_openapi_csv_media_type_matches_runtime(contract_client):
     response = await contract_client.get("/v1/audit-events.csv")
     if response.status_code != 200:
         pytest.fail(f"CSV setup failed: HTTP {response.status_code}")
     media_type = response.headers["content-type"].split(";", 1)[0]
     documented = app.openapi()["paths"]["/v1/audit-events.csv"]["get"]["responses"]["200"]
-    assert media_type in documented["content"]
+    assert media_type == "text/csv"
+    assert documented["content"] == {"text/csv": {"schema": {"type": "string"}}}
+    assert response.headers["content-disposition"] == 'attachment; filename="audit-ten_qa_contract.csv"'
+    assert next(csv.reader(io.StringIO(response.text))) == [
+        "id", "action_id", "created_at_utc", "execution_result_json", "error", "prev_hash", "event_hash"
+    ]
+    baseline = json.loads(
+        (Path(__file__).parents[1] / "docs" / "openapi.baseline.json").read_text()
+    )
+    assert baseline["paths"]["/v1/audit-events.csv"]["get"]["responses"]["200"] == documented
 
 
 async def test_create_fetch_and_empty_page_response_shapes(contract_client):

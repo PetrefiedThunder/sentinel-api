@@ -133,7 +133,11 @@ async def verify_chain(
     }
 
 
-@router.get(".csv")
+@router.get(
+    ".csv",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/csv": {"schema": {"type": "string"}}}}},
+)
 async def export_csv(
     action_id: str | None = Query(None, description="Filter to a single action_id"),
     limit: int = Query(10_000, ge=1, le=100_000),
@@ -172,13 +176,17 @@ async def export_csv(
         buf.truncate(0)
 
         for e in rows:
+            error = e.error or ""
+            # Escape only the CSV presentation; stored evidence and JSON stay exact.
+            if error.lstrip().startswith(("=", "+", "-", "@")) or error.startswith(("\t", "\r", "\n")):
+                error = "'" + error
             writer.writerow(
                 [
                     e.id,
                     e.action_id,
                     e.created_at.isoformat() if e.created_at else "",
                     json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
-                    e.error or "",
+                    error,
                     e.prev_hash or "",
                     e.event_hash or "",
                 ]

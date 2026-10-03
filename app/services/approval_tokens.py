@@ -46,6 +46,8 @@ def verify_decision_token(
     action_id: str,
     now: int | None = None,
 ) -> str:
+    if not token.isascii():
+        raise InvalidApprovalToken("Malformed approval token")
     try:
         payload_part, signature_part = token.split(".", 1)
     except ValueError as exc:

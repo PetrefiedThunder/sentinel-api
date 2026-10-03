@@ -6,6 +6,7 @@ not entered. Known defects are strict xfails linked to the QA findings report.
 
 import csv
 import io
+import json
 import secrets
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -20,7 +21,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.auth import generate_api_key, hash_key
 from app.config import settings
 from app.db import Base, get_db
-from app.models import ApiKey, Approval, ApproverContact, AuditEvent, Tenant, WebhookEndpoint
+from app.models import (
+    ApiKey,
+    Approval,
+    ApproverContact,
+    AuditEvent,
+    NotificationAttempt,
+    Tenant,
+    WebhookEndpoint,
+)
 from app.routers import approvals, audit, tenants, twilio_webhooks, webhooks
 from app.services import onboarding
 from app.services.contacts import destination_hash
@@ -161,7 +170,6 @@ async def test_recovery_token_is_single_use_and_preserves_first_recovered_key(qa
     assert (replay.status_code in (400, 401, 409), unchanged) == (True, True)
 
 
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason="BE-002: onboarding accepts the known weak signing default")
 def test_onboarding_rejects_weak_signing_configuration(monkeypatch):
     # Exercise the actual configured default without printing or minting a token.
     weak_default = type(settings).model_fields["JWT_SECRET"].default
@@ -170,14 +178,18 @@ def test_onboarding_rejects_weak_signing_configuration(monkeypatch):
         onboarding._sign("qa-non-token-payload")
 
 
-@pytest.mark.parametrize("url", ["http://127.0.0.1/hook", "http://10.0.0.1/hook", "http://[::1]/hook"])
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-003: private webhook targets are accepted without an egress guard")
-async def test_webhook_registration_rejects_private_network_targets(qa_api, url):
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("host", ["127.0.0.1", "10.0.0.1", "[::1]"])
+async def test_webhook_registration_rejects_private_network_targets(qa_api, scheme, host):
+    # BE-003: reject unsafe registrations without persisting an endpoint.
     # Registration alone has no outbound request. Never resolve or call the URL.
+    url = f"{scheme}://{host}/hook"
     response = await qa_api.client.post("/v1/webhooks", json={"url": url}, headers=bearer(qa_api))
     if response.status_code not in (200, 400, 422):
         pytest.fail("Webhook registration failed outside the destination-validation boundary")
     assert response.status_code in (400, 422)
+    async with qa_api.sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(WebhookEndpoint)) == 1
 
 
 @pytest.mark.parametrize(
@@ -194,10 +206,21 @@ async def test_malformed_ascii_token_classes_fail_closed(qa_api, path, token):
     "path", ["/v1/approvals/act_qa_owner/token-decision",
              "/v1/tenants/recover/exchange", "/v1/tenants/verify-email"],
 )
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-004: non-ASCII token signatures produce HTTP 500")
-async def test_unicode_token_signature_is_a_client_error(qa_api, path):
-    response = await qa_api.client.post(path, json={"token": "invalid.\N{SNOWMAN}"})
+@pytest.mark.parametrize(
+    "token",
+    ["invalid.\N{SNOWMAN}", "\N{SNOWMAN}.invalid", "invalid.\ud800", "\ud800.invalid"],
+    ids=["unicode-signature", "unicode-payload", "surrogate-signature", "surrogate-payload"],
+)
+async def test_unicode_token_signature_is_a_client_error(qa_api, path, token):
+    # BE-004: reject malformed encoding before signing or comparing strings.
+    response = await qa_api.client.post(
+        path, content=json.dumps({"token": token}), headers={"Content-Type": "application/json"}
+    )
     assert response.status_code in (400, 401)
+    async with qa_api.sessions() as session:
+        assert (await session.get(Approval, "act_qa_owner")).decision == "pending"
+        assert (await session.get(Tenant, "ten_qa_owner")).email_verified_at is None
+        assert await session.scalar(select(func.count()).select_from(ApiKey)) == 3
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-005: recovery emits a live key prefix for a test workspace")
@@ -228,25 +251,50 @@ async def test_default_sms_approver_obeys_same_consent_requirement_as_explicit_a
     assert fallback.status_code == 400
 
 
-@pytest.mark.parametrize(
-    "configured",
-    [True, pytest.param(False, marks=pytest.mark.xfail(
-        strict=True, raises=AssertionError,
-        reason="BE-007: absent Twilio auth configuration accepts unsigned mutations"
-    ))],
-)
-async def test_unsigned_twilio_callback_cannot_change_multiple_tenants(qa_api, monkeypatch, configured):
+@pytest.mark.parametrize("configured", [True, False])
+@pytest.mark.parametrize(("keyword", "initial_status"), [("STOP", "active"), ("START", "revoked")])
+async def test_unsigned_twilio_callback_cannot_change_multiple_tenants(
+    qa_api, monkeypatch, configured, keyword, initial_status
+):
+    # BE-007: reject before contact or audit mutation in either consent direction.
+    async with qa_api.sessions() as session:
+        for contact in await session.scalars(select(ApproverContact)):
+            contact.consent_status = initial_status
+        await session.commit()
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", secrets.token_hex(32) if configured else "")
     response = await qa_api.client.post(
-        "/webhooks/twilio/inbound", data={"From": "+15551230000", "Body": "STOP"}
+        "/webhooks/twilio/inbound", data={"From": "+15551230000", "Body": keyword}
     )
     async with qa_api.sessions() as session:
         contacts = (await session.scalars(select(ApproverContact))).all()
-        unchanged = all(contact.consent_status == "active" for contact in contacts)
-    assert (response.status_code in (401, 503), unchanged) == (True, True)
+        unchanged = all(contact.consent_status == initial_status for contact in contacts)
+        audit_count = await session.scalar(select(func.count()).select_from(AuditEvent))
+    assert response.status_code == (401 if configured else 503)
+    assert unchanged
+    assert audit_count == 0
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-008: audit CSV exports untrusted formula cells unchanged")
+@pytest.mark.parametrize("configured", [True, False])
+async def test_be007_unsigned_status_callback_preserves_attempt_and_audit(qa_api, monkeypatch, configured):
+    async with qa_api.sessions() as session:
+        session.add(NotificationAttempt(
+            id="nat_qa_owner", tenant_id="ten_qa_owner", action_id="act_qa_owner",
+            channel="sms", destination_hash=destination_hash("+15551230000"),
+            destination_last4="0000", provider="twilio", provider_message_sid="SMqa",
+            provider_status="accepted",
+        ))
+        await session.commit()
+    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", secrets.token_hex(32) if configured else "")
+    response = await qa_api.client.post(
+        "/webhooks/twilio/status", data={"MessageSid": "SMqa", "MessageStatus": "delivered"}
+    )
+    async with qa_api.sessions() as session:
+        attempt = await session.get(NotificationAttempt, "nat_qa_owner")
+        assert attempt.provider_status == "accepted"
+        assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 0
+    assert response.status_code == (401 if configured else 503)
+
+
 async def test_audit_csv_neutralizes_spreadsheet_formula_cells(qa_api):
     response = await qa_api.client.post(
         "/v1/audit-events",

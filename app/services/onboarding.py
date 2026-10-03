@@ -15,12 +15,14 @@ import time
 import httpx
 
 from app.config import settings
+from app.services.approval_tokens import _require_strong_signing_secret
 
 log = logging.getLogger(__name__)
 
 
 # ── HMAC token (purpose-scoped) ──────────────────────────────────────
 def _sign(payload_part: str) -> str:
+    _require_strong_signing_secret()
     digest = hmac.new(
         settings.JWT_SECRET.encode(),
         payload_part.encode(),
@@ -56,6 +58,8 @@ def create_token(purpose: str, subject: str, ttl_seconds: int) -> str:
 
 def verify_token(token: str, expected_purpose: str) -> str:
     """Return subject (tenant_id) if the token is valid for `expected_purpose`."""
+    if not token.isascii():
+        raise InvalidOnboardingToken("Malformed token")
     try:
         payload_part, signature_part = token.split(".", 1)
     except ValueError as e:
