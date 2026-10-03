@@ -87,8 +87,13 @@ async def test_be008_csv_error_is_safe_without_mutating_audit_evidence(audit_api
     assert len(rows) == 1
     row = rows[0]
     assert list(row) == [
-        "id", "action_id", "created_at_utc", "execution_result_json",
-        "error", "prev_hash", "event_hash",
+        "id",
+        "action_id",
+        "created_at_utc",
+        "execution_result_json",
+        "error",
+        "prev_hash",
+        "event_hash",
     ]
     assert row["error"] == ("'" + error if escaped else error or "")
     assert json.loads(row["execution_result_json"]) == "=1+1"
