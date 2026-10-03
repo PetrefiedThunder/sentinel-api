@@ -64,3 +64,5 @@ Screenshots: [desktop](artifacts/ux-chromium-desktop.png), [mobile viewport](art
 No commits, pushes, merges, deploys or product behavior changes were made. No environment/credential files were read and no production systems were exercised. An attempted read-only Git history scan triggered automatic missing-object retrieval and failed; that dead end is explicitly recorded rather than treated as a completed scan.
 
 Final artifact validation: all local Markdown evidence links resolve; FINDINGS.md has 16 rows with all eight required columns; all five mandatory docs exist. [Added-content secret scan](artifacts/gitleaks-added-content.json) is clean. The orchestrator still owns its independent scan and publishing steps.
+
+Fix pass: see FIXES.md
