@@ -20,7 +20,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.auth import generate_api_key, hash_key
 from app.config import settings
 from app.db import Base, get_db
-from app.models import ApiKey, Approval, ApproverContact, AuditEvent, Tenant, WebhookEndpoint
+from app.models import (
+    ApiKey,
+    Approval,
+    ApproverContact,
+    AuditEvent,
+    NotificationAttempt,
+    Tenant,
+    WebhookEndpoint,
+)
 from app.routers import approvals, audit, tenants, twilio_webhooks, webhooks
 from app.services import onboarding
 from app.services.contacts import destination_hash
@@ -227,22 +235,48 @@ async def test_default_sms_approver_obeys_same_consent_requirement_as_explicit_a
     assert fallback.status_code == 400
 
 
-@pytest.mark.parametrize(
-    "configured",
-    [True, pytest.param(False, marks=pytest.mark.xfail(
-        strict=True, raises=AssertionError,
-        reason="BE-007: absent Twilio auth configuration accepts unsigned mutations"
-    ))],
-)
-async def test_unsigned_twilio_callback_cannot_change_multiple_tenants(qa_api, monkeypatch, configured):
+@pytest.mark.parametrize("configured", [True, False])
+@pytest.mark.parametrize(("keyword", "initial_status"), [("STOP", "active"), ("START", "revoked")])
+async def test_unsigned_twilio_callback_cannot_change_multiple_tenants(
+    qa_api, monkeypatch, configured, keyword, initial_status
+):
+    # BE-007: reject before contact or audit mutation in either consent direction.
+    async with qa_api.sessions() as session:
+        for contact in await session.scalars(select(ApproverContact)):
+            contact.consent_status = initial_status
+        await session.commit()
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", secrets.token_hex(32) if configured else "")
     response = await qa_api.client.post(
-        "/webhooks/twilio/inbound", data={"From": "+15551230000", "Body": "STOP"}
+        "/webhooks/twilio/inbound", data={"From": "+15551230000", "Body": keyword}
     )
     async with qa_api.sessions() as session:
         contacts = (await session.scalars(select(ApproverContact))).all()
-        unchanged = all(contact.consent_status == "active" for contact in contacts)
-    assert (response.status_code in (401, 503), unchanged) == (True, True)
+        unchanged = all(contact.consent_status == initial_status for contact in contacts)
+        audit_count = await session.scalar(select(func.count()).select_from(AuditEvent))
+    assert response.status_code == (401 if configured else 503)
+    assert unchanged
+    assert audit_count == 0
+
+
+@pytest.mark.parametrize("configured", [True, False])
+async def test_be007_unsigned_status_callback_preserves_attempt_and_audit(qa_api, monkeypatch, configured):
+    async with qa_api.sessions() as session:
+        session.add(NotificationAttempt(
+            id="nat_qa_owner", tenant_id="ten_qa_owner", action_id="act_qa_owner",
+            channel="sms", destination_hash=destination_hash("+15551230000"),
+            destination_last4="0000", provider="twilio", provider_message_sid="SMqa",
+            provider_status="accepted",
+        ))
+        await session.commit()
+    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", secrets.token_hex(32) if configured else "")
+    response = await qa_api.client.post(
+        "/webhooks/twilio/status", data={"MessageSid": "SMqa", "MessageStatus": "delivered"}
+    )
+    async with qa_api.sessions() as session:
+        attempt = await session.get(NotificationAttempt, "nat_qa_owner")
+        assert attempt.provider_status == "accepted"
+        assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 0
+    assert response.status_code == (401 if configured else 503)
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-008: audit CSV exports untrusted formula cells unchanged")

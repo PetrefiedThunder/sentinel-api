@@ -15,16 +15,17 @@ START_WORDS = {"START", "YES", "UNSTOP"}
 
 
 async def _verified_form(request: Request):
+    if not settings.TWILIO_AUTH_TOKEN:
+        raise HTTPException(503, "Twilio webhook authentication is not configured")
     form = await request.form()
     params = {key: str(value) for key, value in form.items()}
     signature = request.headers.get("X-Twilio-Signature", "")
-    if settings.TWILIO_AUTH_TOKEN:
-        validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
-        validation_url = f"{settings.PUBLIC_API_URL.rstrip('/')}{request.url.path}"
-        if request.url.query:
-            validation_url = f"{validation_url}?{request.url.query}"
-        if not validator.validate(validation_url, params, signature):
-            raise HTTPException(401, "Invalid Twilio signature")
+    validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+    validation_url = f"{settings.PUBLIC_API_URL.rstrip('/')}{request.url.path}"
+    if request.url.query:
+        validation_url = f"{validation_url}?{request.url.query}"
+    if not validator.validate(validation_url, params, signature):
+        raise HTTPException(401, "Invalid Twilio signature")
     return params
 
 
