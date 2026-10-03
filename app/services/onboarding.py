@@ -15,12 +15,14 @@ import time
 import httpx
 
 from app.config import settings
+from app.services.approval_tokens import _require_strong_signing_secret
 
 log = logging.getLogger(__name__)
 
 
 # ── HMAC token (purpose-scoped) ──────────────────────────────────────
 def _sign(payload_part: str) -> str:
+    _require_strong_signing_secret()
     digest = hmac.new(
         settings.JWT_SECRET.encode(),
         payload_part.encode(),

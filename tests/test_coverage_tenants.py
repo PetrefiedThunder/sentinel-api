@@ -5,11 +5,20 @@ The tenants router has dependencies that aren't overridden by client_for
 Rate limiting fails open without Redis, and welcome/recovery emails are
 background tasks that no-op without RESEND_API_KEY.
 """
+import secrets
+
+import pytest
 from sqlalchemy import select
 from test_support import client_for, make_sqlite_session, run
 
+from app.config import settings
 from app.models import ApiKey
 from app.services.onboarding import create_token
+
+
+@pytest.fixture(autouse=True)
+def strong_signing_configuration(monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", secrets.token_hex(32))
 
 
 def test_signup_rejects_invalid_email():

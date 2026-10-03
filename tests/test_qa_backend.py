@@ -161,7 +161,6 @@ async def test_recovery_token_is_single_use_and_preserves_first_recovered_key(qa
     assert (replay.status_code in (400, 401, 409), unchanged) == (True, True)
 
 
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception, reason="BE-002: onboarding accepts the known weak signing default")
 def test_onboarding_rejects_weak_signing_configuration(monkeypatch):
     # Exercise the actual configured default without printing or minting a token.
     weak_default = type(settings).model_fields["JWT_SECRET"].default
