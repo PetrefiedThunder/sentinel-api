@@ -26,7 +26,7 @@ uvicorn app.main:app --reload
 
 ```bash
 pytest -q                                  # all tests
-pytest tests/test_approvals.py -v          # one file
+pytest tests/test_middleware_contract.py -v --no-cov  # one file
 pytest -k "rejection"                      # by name pattern
 ```
 
