@@ -1,0 +1,3 @@
+exported_error_cell: =1+1
+spreadsheet_formula_prefix_preserved: True
+Only harmless arithmetic marker used. No spreadsheet process, network or database connection.

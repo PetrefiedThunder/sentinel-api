@@ -1,0 +1,173 @@
+     1	# Sentinel API Production Checklist
+     2	
+     3	Use this before enabling text-message approvals for real users.
+     4	
+     5	## Required Secrets
+     6	
+     7	- `JWT_SECRET`: set to a unique random value with at least 32 bytes of entropy. Do not use `change-me`, `dev-only-replace`, or any copied example value.
+     8	- `TWILIO_ACCOUNT_SID`: Twilio account SID for outbound approval texts.
+     9	- `TWILIO_AUTH_TOKEN`: Twilio auth token. Store it only in the deployment secret manager.
+    10	- `TWILIO_FROM_NUMBER`: SMS-capable sender number owned by the Twilio account.
+    11	- `RESEND_API_KEY`: optional fallback for `mailto:` approvers.
+    12	
+    13	## Approval Links
+    14	
+    15	- Approval links are signed with `JWT_SECRET`.
+    16	- Links are bound to one approval action and one decision.
+    17	- Link expiration uses the approval request `timeout_seconds`.
+    18	- Links are single-use in practice because `/v1/approvals/{action_id}/token-decision` only accepts pending approvals.
+    19	
+    20	## Preflight Checks
+    21	
+    22	- Confirm `PUBLIC_APP_URL` points to the deployed dashboard URL that serves `/approve/{id}`.
+    23	- Confirm CORS allows the deployed dashboard origin in `app/main.py`.
+    24	- Send a test approval to an internal phone number and verify approve/reject both record an audit event.
+    25	- Rotate `JWT_SECRET` only during a maintenance window; outstanding approval links signed with the old secret will stop working.
+    26	
+    27	## Idempotency Atomicity Rollout
+    28	
+    29	### Mandatory decision-writer drain gate
+    30	
+    31	Do not merge or deploy the decision atomicity change until the rollout owner
+    32	has a maintenance plan that prevents old and new decision writers from running
+    33	at the same time. During the rollout:
+    34	
+    35	1. Pause ingress to both `/v1/approvals/{action_id}/decision` and
+    36	   `/v1/approvals/{action_id}/token-decision`.
+    37	2. Drain or terminate every API instance running the old decision writer and
+    38	   wait for its in-flight decision requests to finish. Record the old revision,
+    39	   instance list, drain start/end times, and operator in the deployment record.
+    40	3. Verify from the platform's instance/process view and request logs that no
+    41	   old instance or old-revision decision request remains. This is a mandatory
+    42	   human release check; do not infer completion only from elapsed time.
+    43	4. Deploy the new revision to every decision-writing instance, verify all live
+    44	   instances report that revision, then reopen the two decision routes.
+    45	
+    46	If the drain cannot be demonstrated, stop the rollout. Do not run a mixed
+    47	old/new writer fleet: an old writer does not take the row lock or commit its
+    48	decision and audit event atomically.
+    49	
+    50	### Legacy idempotency-claim gate
+    51	
+    52	Before deploying the atomic idempotency change, pause approval writes and run
+    53	this read-only query against the production primary:
+    54	
+    55	```sql
+    56	SELECT tenant_id, idempotency_key, method, path, request_hash, created_at
+    57	FROM idempotency_keys
+    58	WHERE response_status = 0
+    59	ORDER BY created_at;
+    60	```
+    61	
+    62	- Zero rows: proceed with the deploy.
+    63	- Any row: stop. Its outcome is indeterminate because an older process may have
+    64	  committed the approval before storing the response. Do not retry its handler,
+    65	  delete the row, or change its status automatically. Preserve a database
+    66	  backup and reconcile the request against approval records and deployment logs
+    67	  under an incident record before deciding its disposition.
+    68	- Do not roll back to code that automatically takes over stale claims while any
+    69	  `response_status = 0` row exists; that path can create a duplicate approval.
+    70	
+    71	After deploy and after one real internal approval, run the query again. There
+    72	must be no aged in-progress rows. A row younger than the configured
+    73	`IDEMPOTENCY_INPROGRESS_TTL_SECONDS` may be an active request; wait past the
+    74	threshold and recheck before treating it as an incident.
+    25	]
+    26	
+    27	[project.optional-dependencies]
+    28	dev = [
+    29	    "pytest>=8.0",
+    30	    "pytest-asyncio>=0.23",
+    31	    "pytest-cov>=5.0",
+    32	    "aiosqlite>=0.20",
+    33	    "ruff>=0.8",
+    34	]
+    35	
+    36	[tool.hatch.build.targets.wheel]
+    37	packages = ["app"]
+    38	
+    39	[tool.ruff]
+    40	line-length = 100
+    41	target-version = "py311"
+    42	extend-exclude = ["dist", "build", ".venv", "alembic/versions"]
+    43	
+    44	[tool.ruff.lint]
+    45	# TCH omitted: FastAPI resolves endpoint annotations at runtime, so moving
+    46	# imports like AsyncSession into TYPE_CHECKING blocks breaks Depends().
+    47	select = ["E", "F", "W", "I", "B", "C4", "UP", "SIM"]
+    48	ignore = [
+    49	    "E501",  # formatter handles line length
+    50	    "B008",  # FastAPI Depends() in defaults
+    51	]
+    52	
+    53	[tool.ruff.lint.per-file-ignores]
+    54	"tests/**" = ["B011"]
+    55	"alembic/env.py" = ["E402"]  # alembic imports after sys.path manipulation
+    56	
+    57	[tool.ruff.format]
+    58	quote-style = "double"
+    59	indent-style = "space"
+    60	
+    61	[tool.pytest.ini_options]
+    62	asyncio_mode = "auto"
+    63	testpaths = ["tests"]
+    64	addopts = "--cov=app --cov-report=term-missing"
+    65	
+    66	[tool.coverage.run]
+    67	source = ["app"]
+    68	
+    69	[tool.coverage.report]
+    70	# Gate raised to 70 in QA-COVERAGE-70 (measured ~80% at the time).
+   112	async def recover_request(
+   113	    payload: RecoverRequest,
+   114	    background: BackgroundTasks,
+   115	    request: Request,
+   116	    db: AsyncSession = Depends(get_db),
+   117	):
+   118	    """Step 1: user enters email → we email them a magic link.
+   119	
+   120	    We always return 204, regardless of whether the email matches a real
+   121	    tenant, so this endpoint cannot be used to enumerate accounts.
+   122	    """
+   123	    # 3 recovery emails per IP per hour. Throttles harassment + cost-bomb.
+   124	    await rate_limit(request, bucket="recover", limit=3, window_seconds=3600)
+   125	    email = (payload.email or "").strip().lower()
+   126	    if "@" not in email:
+   127	        # never reveal whether email exists — always pretend success
+   128	        return {"ok": True}
+   129	    result = await db.execute(select(Tenant).where(Tenant.email == email))
+   130	    tenant = result.scalar_one_or_none()
+   131	    if tenant is not None:
+   132	        background.add_task(send_recovery_email, tenant)
+   133	    return {"ok": True}
+   134	
+   135	
+   136	class RecoverExchange(BaseModel):
+   137	    token: str
+   138	
+   139	
+   140	@router.post("/recover/exchange")
+   141	async def recover_exchange(
+   142	    payload: RecoverExchange, db: AsyncSession = Depends(get_db)
+   143	):
+   144	    """Step 2: dashboard POSTs the token from the magic link. We revoke all
+   145	    existing keys and issue a brand-new one. The new key is returned ONCE."""
+   146	    try:
+   147	        tenant_id = verify_token(payload.token, expected_purpose="recover")
+   148	    except InvalidOnboardingToken as e:
+   232	staging environment. Treat every merge to `main` as a production release.
+   233	The container applies migrations before starting Uvicorn.
+   234	
+   235	Before release, follow the [production checklist](docs/production-checklist.md),
+   236	including its decision-writer drain and legacy idempotency reconciliation gates.
+   237	The [incident-response runbook](docs/runbooks/incident-response.md) describes
+   238	triage and rollback responsibilities.
+   239	
+   240	## Security
+   241	
+   242	See [SECURITY.md](SECURITY.md) for the private vulnerability-reporting process.
+   243	Do not file public issues for security vulnerabilities.
+   244	
+   245	## License
+   246	
+   247	MIT — © RegEngine, Inc.

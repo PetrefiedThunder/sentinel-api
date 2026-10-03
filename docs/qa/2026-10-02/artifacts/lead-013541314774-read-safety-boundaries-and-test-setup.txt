@@ -1,0 +1,409 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    DATABASE_URL: str = "postgresql+asyncpg://[REDACTED]@localhost:5432/sentinel"
+    # Optional Postgres read replica. When empty (default), read-only endpoints
+    # fall back to the primary engine — behaviour is identical to having no
+    # replica. When set, read sessions target this URL. See
+    # docs/runbooks/postgres-read-replica.md for provisioning.
+    READ_REPLICA_URL: str = ""
+    REDIS_URL: str = "redis://localhost:6379/0"
+    JWT_SECRET: str = "change-me"
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_FROM_NUMBER: str = ""
+    TWILIO_MESSAGING_SERVICE_SID: str = ""
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = ""
+    EMAIL_REPLY_TO: str = ""
+    PUBLIC_APP_URL: str = "https://app.pauseapi.app"
+    PUBLIC_API_URL: str = "https://api.pauseapi.app"
+    # Comma-separated list of approver strings (email or sms:+1...). Used when the
+    # caller's `approvers` list is empty — so the system always has a fallback recipient.
+    DEFAULT_APPROVERS: str = ""
+
+    ADMIN_TOKEN: str = ""
+
+    # Staleness threshold for an in-progress idempotency claim. New writes
+    # atomically commit the claim, handler effects, and stored response, so a
+    # crash rolls them all back. A committed _IN_PROGRESS row can only have an
+    # indeterminate/legacy outcome; once older than this threshold it fails
+    # closed with 409 instead of re-running a potentially completed write. Keep
+    # this comfortably above the longest expected handler and brief poll window.
+    IDEMPOTENCY_INPROGRESS_TTL_SECONDS: int = 30
+
+    # Stripe billing — keys come from Stripe dashboard. If empty, billing
+    # endpoints return 503 (feature disabled).
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_PRO: str = ""  # price_... id of the Pro monthly plan
+    STRIPE_SUCCESS_URL: str = "https://app.pauseapi.app/billing?status=success"
+    STRIPE_CANCEL_URL: str = "https://app.pauseapi.app/billing?status=cancelled"
+
+    # RFC 3161 Time Stamping Authority endpoint (e.g. https://freetsa.org/tsr).
+    # Empty (default) disables audit-event timestamping entirely.
+    TSA_URL: str = ""
+
+    SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = "production"
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.05
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def default_approvers_list(self) -> list[str]:
+        return [a.strip() for a in self.DEFAULT_APPROVERS.split(",") if a.strip()]
+
+
+settings = Settings()
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+from app.config import settings
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def _normalize_async_url(url: str) -> str:
+    """Coerce a plain Postgres URL to the asyncpg driver SQLAlchemy needs."""
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://") :]
+    return url
+
+
+_db_url = _normalize_async_url(settings.DATABASE_URL)
+
+engine = create_async_engine(_db_url, pool_pre_ping=True)
+SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+# Optional read replica. If READ_REPLICA_URL is set we build a second engine +
+# sessionmaker pointed at the replica; otherwise reads reuse the primary engine
+# so behaviour is identical to having no replica configured.
+if settings.READ_REPLICA_URL:
+    read_engine = create_async_engine(
+        _normalize_async_url(settings.READ_REPLICA_URL), pool_pre_ping=True
+    )
+    ReadSessionLocal = async_sessionmaker(read_engine, class_=AsyncSession, expire_on_commit=False)
+else:
+    read_engine = engine
+    ReadSessionLocal = SessionLocal
+
+
+async def get_db():
+    async with SessionLocal() as session:
+        yield session
+
+
+async def get_read_session():
+    """Session for read-only endpoints.
+
+    Targets the read replica when READ_REPLICA_URL is set, otherwise falls back
+    to the primary engine. Note replication lag: do not use for read-after-write
+    flows that must see their own just-committed data — use get_db for those.
+    """
+    async with ReadSessionLocal() as session:
+        yield session
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.logging_setup import RequestContextMiddleware, configure_logging
+from app.routers import (
+    admin,
+    approvals,
+    approver_contacts,
+    audit,
+    billing,
+    status_history,
+    tenants,
+    twilio_webhooks,
+    webhooks,
+)
+from app.services.decision_bus import bus
+
+# Configure structured (JSON) logging first so anything below logs as JSON.
+configure_logging(level="INFO")
+
+# Initialize Sentry as early as possible so import-time errors are captured too.
+if settings.SENTRY_DSN:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.SENTRY_ENVIRONMENT,
+        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,  # never send phone/email/approval payloads
+        max_breadcrumbs=50,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await bus.start()
+    try:
+        yield
+    finally:
+        await bus.stop()
+
+
+app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
+
+# Request context — stamps request_id + method + route on every log line,
+# emits a structured "request.completed" record. Must be added BEFORE the
+# CORS middleware so it wraps the inner handler chain.
+app.add_middleware(RequestContextMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://pauseapi.app",
+        "https://app.pauseapi.app",
+        "http://localhost:3000",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
+
+app.include_router(tenants.router, prefix="/v1/tenants", tags=["tenants"])
+app.include_router(approvals.router, prefix="/v1/approvals", tags=["approvals"])
+app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tags=["approver-contacts"])
+app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
+app.include_router(twilio_webhooks.router)
+app.include_router(webhooks.router, prefix="/v1/webhooks", tags=["webhooks"])
+app.include_router(status_history.router, prefix="/v1/status", tags=["status"])
+app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
+app.include_router(admin.router, prefix="/v1", tags=["admin"])
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "bus": bus._started}
+tests/test_idempotency_replay.py:16:`create_approval`; we monkeypatch `dispatch_approval_notifications` with a
+tests/test_idempotency_replay.py:53:def no_notifications(monkeypatch):
+tests/test_idempotency_replay.py:64:    monkeypatch.setattr("app.services.approval_service.dispatch_approval_notifications", _count)
+tests/test_decision_postgres.py:27:async def decision_db(pg_sessions, monkeypatch):
+tests/test_decision_postgres.py:41:    monkeypatch.setattr(settings, "JWT_SECRET", "synthetic-postgres-decision-test-secret-32-bytes")
+tests/test_decision_postgres.py:56:    monkeypatch.setattr(approvals, "notify_decision", notified)
+tests/test_decision_postgres.py:57:    monkeypatch.setattr(approvals, "dispatch_approval_webhook", webhook)
+tests/test_decision_postgres.py:150:    decision_db, monkeypatch, winner_kind, loser_kind, identical_token
+tests/test_decision_postgres.py:169:        monkeypatch.setattr(approvals, "append_audit_event", hold_winner)
+tests/test_decision_postgres.py:198:async def test_different_actions_serialize_one_tenant_audit_chain(decision_db, monkeypatch):
+tests/test_decision_postgres.py:213:        monkeypatch.setattr(approvals, "append_audit_event", hold_after_append)
+tests/test_decision_postgres.py:265:    decision_db, monkeypatch, kind, fault
+tests/test_decision_postgres.py:276:        with monkeypatch.context() as patch:
+tests/test_decision_postgres.py:291:async def test_cancellation_after_audit_flush_rolls_back(decision_db, monkeypatch, kind):
+tests/test_decision_postgres.py:304:        with monkeypatch.context() as patch:
+tests/test_decision_postgres.py:359:    decision_db, monkeypatch, kind
+tests/test_decision_postgres.py:371:        with monkeypatch.context() as patch:
+tests/test_coverage_billing.py:4:monkeypatch the _stripe_post / signature helpers so no network call happens.
+tests/test_coverage_billing.py:90:def test_checkout_happy_path_uses_customer_email(monkeypatch):
+tests/test_coverage_billing.py:102:    monkeypatch.setattr(billing, "_stripe_post", fake_post)
+tests/test_coverage_billing.py:117:def test_checkout_reuses_existing_customer(monkeypatch):
+tests/test_coverage_billing.py:130:    monkeypatch.setattr(billing, "_stripe_post", fake_post)
+tests/test_approval_sms_consent.py:66:def test_create_approval_accepts_active_sms_contact(monkeypatch):
+tests/test_approval_sms_consent.py:72:        monkeypatch.setattr("app.services.approval_service.dispatch_approval_notifications", noop_dispatch)
+tests/test_idempotency_race.py:7:Two requests with the same (tenant_id, idempotency_key) can both miss the
+tests/test_idempotency_race.py:38:def no_notifications(monkeypatch):
+tests/test_idempotency_race.py:44:    monkeypatch.setattr("app.services.approval_service.dispatch_approval_notifications", _count)
+tests/test_idempotency_race.py:333:    We monkeypatch the poll's sleep to flip the row from in-progress to stored
+tests/test_coverage_onboarding.py:45:def test_send_skips_without_resend_key(monkeypatch):
+tests/test_coverage_onboarding.py:46:    """_send is a no-op (no httpx call) when RESEND_API_KEY is unset."""
+tests/test_coverage_onboarding.py:49:    monkeypatch.setattr(settings, "RESEND_API_KEY", "")
+tests/test_coverage_onboarding.py:54:def test_send_welcome_email_invokes_send(monkeypatch):
+tests/test_coverage_onboarding.py:64:    monkeypatch.setattr(onboarding, "_send", fake_send)
+tests/test_coverage_onboarding.py:72:def test_send_recovery_email_invokes_send(monkeypatch):
+tests/test_coverage_onboarding.py:81:    monkeypatch.setattr(onboarding, "_send", fake_send)
+tests/test_coverage_onboarding.py:88:def test_send_makes_http_call_with_key(monkeypatch):
+tests/test_coverage_onboarding.py:89:    """When RESEND_API_KEY is set, _send POSTs to Resend (mocked httpx)."""
+tests/test_coverage_onboarding.py:92:    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test")
+tests/test_coverage_onboarding.py:114:    monkeypatch.setattr(onboarding.httpx, "AsyncClient", FakeClient)
+tests/test_webhook_dispatch.py:27:def test_dispatch_tracks_delivery_tasks_until_done(monkeypatch):
+tests/test_webhook_dispatch.py:44:        monkeypatch.setattr(webhooks, "_deliver_with_retries", fake_deliver)
+tests/test_webhook_dispatch.py:60:def test_dispatch_logs_crashed_delivery_tasks(monkeypatch):
+tests/test_webhook_dispatch.py:74:        monkeypatch.setattr(webhooks, "_deliver_with_retries", fake_deliver)
+tests/test_webhook_dispatch.py:75:        monkeypatch.setattr(
+tests/test_idempotency_ttl.py:41:def no_notifications(monkeypatch):
+tests/test_idempotency_ttl.py:47:    monkeypatch.setattr("app.services.approval_service.dispatch_approval_notifications", _count)
+tests/test_idempotency_ttl.py:199:    no_notifications, monkeypatch
+tests/test_idempotency_ttl.py:213:        monkeypatch.setattr(idem, "jsonable_encoder", crash_after_handler)
+tests/test_idempotency_ttl.py:231:        monkeypatch.setattr(idem, "jsonable_encoder", real_encoder)
+tests/test_idempotency_ttl.py:270:def test_create_route_dispatches_notification_only_after_commit(no_notifications, monkeypatch):
+tests/test_idempotency_ttl.py:281:    monkeypatch.setattr(session, "commit", observed_commit)
+tests/test_coverage_webhooks.py:201:def test_dispatch_spawns_delivery_task(monkeypatch):
+tests/test_coverage_webhooks.py:215:    monkeypatch.setattr(whsvc, "_deliver_with_retries", fake_deliver)
+tests/test_twilio_webhooks.py:14:def test_twilio_status_webhook_rejects_invalid_signature(monkeypatch):
+tests/test_twilio_webhooks.py:17:        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_twilio_webhooks.py:18:        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+tests/test_twilio_webhooks.py:32:def test_twilio_status_webhook_updates_attempt_once(monkeypatch):
+tests/test_twilio_webhooks.py:35:        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_twilio_webhooks.py:36:        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+tests/test_twilio_webhooks.py:93:def test_twilio_inbound_stop_revokes_and_start_reactivates_contact(monkeypatch):
+tests/test_twilio_webhooks.py:96:        monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_twilio_webhooks.py:97:        monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://testserver")
+tests/test_signed_decision_links.py:64:def test_signed_decision_link_approves_pending_action(client_with_db, monkeypatch):
+tests/test_signed_decision_links.py:81:    monkeypatch.setattr(approvals_router, "verify_decision_token", verify_token, raising=False)
+tests/test_signed_decision_links.py:82:    monkeypatch.setattr(approvals_router, "append_audit_event", append_event)
+tests/test_signed_decision_links.py:83:    monkeypatch.setattr(approvals_router, "dispatch_approval_webhook", dispatch_webhook)
+tests/test_signed_decision_links.py:99:def test_signed_decision_link_rejects_invalid_token(client_with_db, monkeypatch):
+tests/test_signed_decision_links.py:105:    monkeypatch.setattr(approvals_router, "verify_decision_token", verify_token, raising=False)
+tests/test_signed_decision_links.py:117:def test_signed_decision_link_cannot_be_reused(client_with_db, monkeypatch):
+tests/test_signed_decision_links.py:121:    monkeypatch.setattr(
+tests/test_notifications.py:3:import httpx
+tests/test_notifications.py:25:            request = httpx.Request("POST", "https://api.twilio.com")
+tests/test_notifications.py:26:            response = httpx.Response(self.status_code, request=request, text=self.text)
+tests/test_notifications.py:27:            raise httpx.HTTPStatusError("provider error", request=request, response=response)
+tests/test_notifications.py:31:    requests = []
+tests/test_notifications.py:44:        self.requests.append((url, kwargs))
+tests/test_notifications.py:51:def reset_settings(monkeypatch):
+tests/test_notifications.py:52:    FakeAsyncClient.requests = []
+tests/test_notifications.py:54:    monkeypatch.setattr(notifications.httpx, "AsyncClient", FakeAsyncClient)
+tests/test_notifications.py:55:    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "")
+tests/test_notifications.py:56:    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "")
+tests/test_notifications.py:57:    monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "")
+tests/test_notifications.py:58:    monkeypatch.setattr(settings, "TWILIO_MESSAGING_SERVICE_SID", "", raising=False)
+tests/test_notifications.py:59:    monkeypatch.setattr(settings, "RESEND_API_KEY", "")
+tests/test_notifications.py:60:    monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://app.pauseapi.app")
+tests/test_notifications.py:64:async def test_send_sms_posts_twilio_message_for_sms_approvers(monkeypatch):
+tests/test_notifications.py:65:    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
+tests/test_notifications.py:66:    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_notifications.py:67:    monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "+15550000000")
+tests/test_notifications.py:68:    monkeypatch.setattr(
+tests/test_notifications.py:84:    assert FakeAsyncClient.requests == [
+tests/test_notifications.py:107:async def test_send_sms_uses_messaging_service_when_configured(monkeypatch):
+tests/test_notifications.py:108:    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
+tests/test_notifications.py:109:    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_notifications.py:110:    monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "")
+tests/test_notifications.py:111:    monkeypatch.setattr(settings, "TWILIO_MESSAGING_SERVICE_SID", "MG123", raising=False)
+tests/test_notifications.py:112:    monkeypatch.setattr(
+tests/test_notifications.py:128:    assert FakeAsyncClient.requests[0][1]["data"]["MessagingServiceSid"] == "MG123"
+tests/test_notifications.py:129:    assert "From" not in FakeAsyncClient.requests[0][1]["data"]
+tests/test_notifications.py:133:async def test_send_sms_records_attempt_and_status_callback_when_configured(monkeypatch):
+tests/test_notifications.py:134:    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
+tests/test_notifications.py:135:    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_notifications.py:136:    monkeypatch.setattr(settings, "TWILIO_MESSAGING_SERVICE_SID", "MG123", raising=False)
+tests/test_notifications.py:137:    monkeypatch.setattr(settings, "PUBLIC_API_URL", "https://api.pauseapi.app", raising=False)
+tests/test_notifications.py:138:    monkeypatch.setattr(settings, "JWT_SECRET", "x" * 32)
+tests/test_notifications.py:139:    monkeypatch.setattr(
+tests/test_notifications.py:172:        request_data = FakeAsyncClient.requests[0][1]["data"]
+tests/test_notifications.py:190:async def test_send_sms_records_failed_attempt_and_audit_event(monkeypatch):
+tests/test_notifications.py:191:    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
+tests/test_notifications.py:192:    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+tests/test_notifications.py:193:    monkeypatch.setattr(settings, "TWILIO_MESSAGING_SERVICE_SID", "MG123", raising=False)
+tests/test_notifications.py:194:    monkeypatch.setattr(settings, "PUBLIC_API_URL", "https://api.pauseapi.app", raising=False)
+tests/test_notifications.py:195:    monkeypatch.setattr(settings, "JWT_SECRET", "x" * 32)
+tests/test_notifications.py:239:async def test_email_notification_escapes_dynamic_html(monkeypatch):
+tests/test_notifications.py:240:    monkeypatch.setattr(settings, "RESEND_API_KEY", "resend_secret")
+tests/test_notifications.py:241:    monkeypatch.setattr(settings, "JWT_SECRET", "x" * 32)
+tests/test_notifications.py:253:    html = FakeAsyncClient.requests[0][1]["json"]["html"]
+tests/test_notifications.py:272:    assert FakeAsyncClient.requests == []
+tests/test_notifications.py:290:    assert FakeAsyncClient.requests == []
+tests/test_delivery_outbox_migration.py:14:def _config(db_path: Path, monkeypatch) -> Config:
+tests/test_delivery_outbox_migration.py:16:    monkeypatch.setenv("DATABASE_URL", url)
+tests/test_delivery_outbox_migration.py:25:    monkeypatch,
+tests/test_delivery_outbox_migration.py:29:    config = _config(db_path, monkeypatch)
+tests/test_coverage_decision_bus.py:12:def test_dsn_conversion(monkeypatch):
+tests/test_coverage_decision_bus.py:13:    monkeypatch.setattr(
+tests/test_coverage_decision_bus.py:14:        dbus.settings, "DATABASE_URL", "postgresql+asyncpg://[REDACTED]@h:5432/db"
+tests/test_coverage_decision_bus.py:54:def test_start_degrades_gracefully_on_connect_failure(monkeypatch):
+tests/test_coverage_decision_bus.py:60:    monkeypatch.setattr(dbus.asyncpg, "connect", boom)
+tests/test_middleware_contract.py:47:def no_notifications(monkeypatch):
+tests/test_middleware_contract.py:54:    monkeypatch.setattr("app.services.approval_service.dispatch_approval_notifications", _count)
+tests/test_token_decision_replay.py:21:def strong_jwt_secret(monkeypatch):
+tests/test_token_decision_replay.py:22:    monkeypatch.setattr(
+tests/test_approval_tokens.py:12:def strong_jwt_secret(monkeypatch):
+tests/test_approval_tokens.py:13:    monkeypatch.setattr(
+tests/test_approval_tokens.py:55:def test_decision_token_refuses_default_signing_secret(monkeypatch):
+tests/test_approval_tokens.py:56:    monkeypatch.setattr(settings, "JWT_SECRET", "change-me")
+tests/test_migrations_roundtrip.py:32:    # env.py reads DATABASE_URL directly (not the alembic cfg) — see alembic/env.py
+tests/test_migrations_roundtrip.py:33:    os.environ["DATABASE_URL"] = db_url
+tests/test_migrations_roundtrip.py:47:@pytest.mark.skipif(
+tests/test_migrations_roundtrip.py:76:@pytest.mark.skipif(
+tests/test_migrations_roundtrip.py:96:@pytest.mark.skipif(
+tests/test_decision_atomicity.py:7:import httpx
+tests/test_decision_atomicity.py:13:from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+tests/test_decision_atomicity.py:29:async def sessions(tmp_path, monkeypatch):
+tests/test_decision_atomicity.py:30:    monkeypatch.setattr(settings, "JWT_SECRET", secrets.token_hex(32))
+tests/test_decision_atomicity.py:31:    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'decisions.sqlite'}")
+tests/test_decision_atomicity.py:71:async def test_audit_failure_does_not_persist_decision(sessions, monkeypatch, route):
+tests/test_decision_atomicity.py:81:    monkeypatch.setattr(approvals, "append_audit_event", fail_audit)
+tests/test_decision_atomicity.py:82:    monkeypatch.setattr(approvals, "notify_decision", record_side_effect)
+tests/test_decision_atomicity.py:83:    monkeypatch.setattr(approvals, "dispatch_approval_webhook", record_side_effect)
+tests/test_decision_atomicity.py:94:def dispatches(sessions, monkeypatch):
+tests/test_decision_atomicity.py:107:    monkeypatch.setattr(approvals, "notify_decision", notify)
+tests/test_decision_atomicity.py:108:    monkeypatch.setattr(approvals, "dispatch_approval_webhook", webhook)
+tests/test_decision_atomicity.py:115:    sessions, monkeypatch, dispatches, route, failure
+tests/test_decision_atomicity.py:134:        with monkeypatch.context() as patch:
+tests/test_decision_atomicity.py:188:    sessions, monkeypatch, dispatches, route
+tests/test_decision_atomicity.py:206:    monkeypatch.setattr(approvals, "append_audit_event", duplicate_audit)
+tests/test_decision_atomicity.py:226:    sessions, monkeypatch, dispatches, failure, expected
+tests/test_decision_atomicity.py:233:    monkeypatch.setattr(approvals, "append_audit_event", fail_audit)
+tests/test_decision_atomicity.py:259:        monkeypatch.setattr(failed, "rollback", controlled_rollback)
+tests/test_decision_atomicity.py:261:            monkeypatch.setattr(approvals, "is_nonce_consumed", controlled_lookup)
+tests/test_decision_atomicity.py:271:            monkeypatch.setattr(failed, "rollback", real_rollback)
+tests/test_decision_atomicity.py:279:    sessions, monkeypatch, dispatches, route
+tests/test_decision_atomicity.py:284:    monkeypatch.setattr(approvals, "notify_decision", fail_notification)
+tests/test_decision_atomicity.py:329:    async with httpx.AsyncClient(
+tests/test_decision_atomicity.py:330:        transport=httpx.ASGITransport(app=app), base_url="http://test"
+tests/test_decision_atomicity.py:347:async def test_http_decision_rejects_unauthorized_or_invalid_requests(
+tests/test_idempotency_postgres.py:3:See docs/idempotency-verification.md. These tests never use DATABASE_URL,
+tests/test_idempotency_postgres.py:17:from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+tests/test_idempotency_postgres.py:26:TEST_DATABASE_ENV = "SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL"
+tests/test_idempotency_postgres.py:40:    raw = os.environ.get(TEST_DATABASE_ENV)
+tests/test_idempotency_postgres.py:42:        pytest.skip(f"set {TEST_DATABASE_ENV} to opt into disposable PostgreSQL tests")
+tests/test_idempotency_postgres.py:43:    if os.environ.get(SCHEMA_OPT_IN_ENV) != "1":
+tests/test_idempotency_postgres.py:61:    if host not in {"localhost", "127.0.0.1", "::1"} and not local_socket:
+tests/test_idempotency_postgres.py:70:    engine = create_async_engine(
+tests/test_idempotency_postgres.py:163:async def test_separate_connections_contend_on_same_key(pg_sessions, monkeypatch, outcome):
+tests/test_idempotency_postgres.py:178:    monkeypatch.setattr(approvals, "create_approval", controlled_create)
+tests/test_idempotency_postgres.py:203:            requests = [task for task in (first, second) if task is not None]
+tests/test_idempotency_postgres.py:204:            for task in requests:
+tests/test_idempotency_postgres.py:208:                await asyncio.gather(*requests, return_exceptions=True)
+tests/test_idempotency_postgres.py:235:async def test_response_serialization_failure_rolls_back_real_approval(pg_sessions, monkeypatch):
+tests/test_idempotency_postgres.py:243:        with monkeypatch.context() as patch:
+tests/test_idempotency_postgres.py:256:async def test_precommit_failure_rolls_back_real_approval(pg_sessions, monkeypatch):
+tests/test_idempotency_postgres.py:265:        with monkeypatch.context() as patch:
+tests/test_idempotency_postgres.py:277:async def test_cancellation_after_approval_flush_rolls_back(pg_sessions, monkeypatch):
+tests/test_idempotency_postgres.py:289:        with monkeypatch.context() as patch:
+tests/test_support.py:5:from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+tests/test_support.py:22:    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+tests/test_tsa.py:6:import httpx
+tests/test_tsa.py:67:    """Stand-in for httpx.AsyncClient returning a canned TSA response."""
+tests/test_tsa.py:83:        request = httpx.Request("POST", url)
+tests/test_tsa.py:84:        return httpx.Response(self._status_code, content=self._body, request=request)
+tests/test_tsa.py:87:def test_timestamp_audit_event_noop_when_unset(monkeypatch):
+tests/test_tsa.py:88:    monkeypatch.setattr(settings, "TSA_URL", "")
+tests/test_tsa.py:93:    monkeypatch.setattr(tsa.httpx, "AsyncClient", explode)
+tests/test_tsa.py:106:def test_timestamp_audit_event_persists_gen_time(monkeypatch):
+tests/test_tsa.py:107:    monkeypatch.setattr(settings, "TSA_URL", "https://tsa.example.com/tsr")
+tests/test_tsa.py:112:        monkeypatch.setattr(
+tests/test_tsa.py:113:            tsa.httpx, "AsyncClient", MockAsyncClient(make_response(event.event_hash))
+tests/test_tsa.py:126:def test_request_timestamp_rejects_non_granted_status(monkeypatch):
+tests/test_tsa.py:127:    monkeypatch.setattr(settings, "TSA_URL", "https://tsa.example.com/tsr")
+tests/test_tsa.py:135:    monkeypatch.setattr(tsa.httpx, "AsyncClient", MockAsyncClient(body))
+tests/test_tsa.py:141:def test_request_timestamp_rejects_imprint_mismatch(monkeypatch):
+tests/test_tsa.py:142:    monkeypatch.setattr(settings, "TSA_URL", "https://tsa.example.com/tsr")
+tests/test_tsa.py:144:    monkeypatch.setattr(tsa.httpx, "AsyncClient", MockAsyncClient(make_response("otherhash")))
+tests/test_tsa.py:150:def test_request_timestamp_http_error(monkeypatch):
+tests/test_tsa.py:151:    monkeypatch.setattr(settings, "TSA_URL", "https://tsa.example.com/tsr")
+tests/test_tsa.py:152:    monkeypatch.setattr(tsa.httpx, "AsyncClient", MockAsyncClient(b"", status_code=503))
+tests/test_tsa.py:165:def test_emit_endpoint_unaffected_when_tsa_disabled(monkeypatch):
+tests/test_tsa.py:171:    monkeypatch.setattr(settings, "TSA_URL", "")
+tests/test_status_history.py:20:def test_probe_returns_503_when_admin_token_not_configured(monkeypatch):
+tests/test_status_history.py:21:    monkeypatch.setattr(settings, "ADMIN_TOKEN", "")
+tests/test_status_history.py:32:def test_probe_rejected_without_or_with_wrong_token(monkeypatch):
+tests/test_status_history.py:33:    monkeypatch.setattr(settings, "ADMIN_TOKEN", ADMIN_TOKEN)
+tests/test_status_history.py:53:def test_probe_accepted_with_admin_token(monkeypatch):
+tests/test_status_history.py:54:    monkeypatch.setattr(settings, "ADMIN_TOKEN", ADMIN_TOKEN)
+.github/CODEOWNERS
+.github/dependabot.yml
+.github/workflows/ci.yml
+.github/workflows/sbom.yml
+/Users/sellers/.codex/skills/security-best-practices/references/python-fastapi-web-server-security.md

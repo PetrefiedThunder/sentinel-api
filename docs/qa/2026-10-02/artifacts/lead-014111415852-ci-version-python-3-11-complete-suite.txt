@@ -1,0 +1,37 @@
+........................................................................ [ 23%]
+..................................................................ssssss [ 46%]
+ssssssssssss.ssssssss................................................... [ 69%]
+.......xxxxx.........xxxxx.xx.xxxxxxxx........................x......... [ 92%]
+.......................                                                  [100%]
+=============================== warnings summary ===============================
+../../../../../private/tmp/sentinel-qa311/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /private/tmp/sentinel-qa311/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+tests/test_approval_sms_consent.py: 3 warnings
+tests/test_approver_contacts.py: 2 warnings
+tests/test_chain_verify.py: 4 warnings
+tests/test_coverage_admin.py: 7 warnings
+tests/test_coverage_audit_router.py: 6 warnings
+tests/test_coverage_billing.py: 13 warnings
+tests/test_coverage_tenants.py: 16 warnings
+tests/test_coverage_webhooks.py: 6 warnings
+tests/test_cursor_pagination.py: 9 warnings
+tests/test_idempotency_race.py: 3 warnings
+tests/test_idempotency_replay.py: 6 warnings
+tests/test_idempotency_ttl.py: 6 warnings
+tests/test_middleware_contract.py: 5 warnings
+tests/test_status_history.py: 5 warnings
+tests/test_token_decision_replay.py: 4 warnings
+tests/test_tsa.py: 1 warning
+tests/test_twilio_webhooks.py: 3 warnings
+  /private/tmp/sentinel-qa311/lib/python3.11/site-packages/pytest_socket/__init__.py:115: UserWarning: A test tried to use socket.getaddrinfo.
+    raise SocketBlockedError("A test tried to use socket.getaddrinfo.")
+
+tests/test_delivery_outbox_migration.py: 2 warnings
+tests/test_migrations_roundtrip.py: 40 warnings
+  /private/tmp/sentinel-qa311/lib/python3.11/site-packages/alembic/config.py:604: DeprecationWarning: No path_separator found in configuration; falling back to legacy splitting on spaces, commas, and colons for prepend_sys_path.  Consider adding path_separator=os to Alembic config.
+    util.warn_deprecated(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+264 passed, 26 skipped, 21 xfailed, 142 warnings in 10.81s

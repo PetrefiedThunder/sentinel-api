@@ -1,0 +1,374 @@
+     1	import hashlib
+     2	import secrets
+     3	
+     4	from fastapi import Depends, Header, HTTPException
+     5	from sqlalchemy import select
+     6	from sqlalchemy.ext.asyncio import AsyncSession
+     7	
+     8	from app.db import get_db
+     9	from app.models import ApiKey, Tenant
+    10	
+    11	
+    12	def hash_key(raw: str) -> str:
+    13	    return hashlib.sha256(raw.encode()).hexdigest()
+    14	
+    15	
+    16	def generate_api_key(mode: str = "live") -> tuple[str, str, str]:
+    17	    """Issue an API key. mode='live' → sk_live_…, mode='test' → sk_test_…
+    18	
+    19	    Test-mode keys are scoped to a test workspace whose approvals never fire
+    20	    real emails/SMS — see services that gate on tenant.mode.
+    21	    """
+    22	    token_prefix = "sk_test_" if mode == "test" else "sk_live_"
+    23	    raw = f"{token_prefix}{secrets.token_hex(32)}"
+    24	    prefix = raw[:11]
+    25	    return raw, prefix, hash_key(raw)
+    26	
+    27	
+    28	async def get_current_tenant(
+    29	    authorization: [REDACTED] = Header(...),
+    30	    db: AsyncSession = Depends(get_db),
+    31	) -> Tenant:
+    32	    if not authorization or not authorization.lower().startswith("bearer "):
+    33	        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    34	    raw_key = authorization.split(" ", 1)[1].strip()
+    35	    key_hash = hash_key(raw_key)
+    36	    result = await db.execute(
+    37	        select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))
+    38	    )
+    39	    api_key = result.scalar_one_or_none()
+    40	    if not api_key:
+    41	        raise HTTPException(status_code=401, detail="Invalid API key")
+    42	    tenant = await db.get(Tenant, api_key.tenant_id)
+    43	    if not tenant:
+    44	        raise HTTPException(status_code=401, detail="Tenant not found")
+    45	    # Stamp tenant_id on every subsequent log line in this request
+    46	    from app.logging_setup import bind_request_context
+    47	    bind_request_context(tenant_id=tenant.id, api_key_id=api_key.id)
+    48	    return tenant
+     1	from datetime import datetime
+     2	
+     3	from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+     4	from pydantic import BaseModel
+     5	from sqlalchemy import select
+     6	from sqlalchemy.ext.asyncio import AsyncSession
+     7	
+     8	from app.auth import generate_api_key, get_current_tenant
+     9	from app.db import get_db
+    10	from app.models import ApiKey, Tenant
+    11	from app.schemas import TenantSettingsUpdate, TenantSignup, _is_supported_approver
+    12	from app.services.onboarding import (
+    13	    InvalidOnboardingToken,
+    14	    send_recovery_email,
+    15	    send_welcome_email,
+    16	    verify_token,
+    17	)
+    18	from app.services.rate_limit import enforce as rate_limit
+    19	
+    20	router = APIRouter()
+    21	
+    22	BLOCKED_DOMAINS = {
+    23	    "gmail.com",
+    24	    "yahoo.com",
+    25	    "hotmail.com",
+    26	    "outlook.com",
+    27	    "icloud.com",
+    28	    "proton.me",
+    29	    "protonmail.com",
+    30	}
+    31	
+    32	
+    33	@router.post("/signup")
+    34	async def signup(
+    35	    payload: TenantSignup,
+    36	    background: BackgroundTasks,
+    37	    request: Request,
+    38	    db: AsyncSession = Depends(get_db),
+    39	):
+    40	    if "@" not in payload.email:
+    41	        raise HTTPException(400, "Invalid email")
+    42	    domain = payload.email.split("@")[-1].lower()
+    43	    if domain in BLOCKED_DOMAINS:
+    44	        raise HTTPException(
+    45	            400, "Work email required (personal email domains not allowed)"
+    46	        )
+    47	    # Throttle per IP (5/hour) AND per email-domain (10/hour). Edge proxies
+    48	    # rewrite client IPs through internal NAT, so an IP-only limit is leaky;
+    49	    # the domain limit catches mass signups against one company regardless of
+    50	    # origin IP.
+    51	    await rate_limit(request, bucket="signup", limit=5, window_seconds=3600)
+    52	    await rate_limit(
+    53	        request,
+    54	        bucket="signup-domain",
+    55	        limit=10,
+    56	        window_seconds=3600,
+    57	        key_suffix=domain,
+    58	        by_ip=False,
+    59	    )
+    60	    existing = await db.execute(select(Tenant).where(Tenant.email == payload.email))
+    61	    if existing.scalar_one_or_none():
+    62	        raise HTTPException(400, "Email already registered")
+    63	    tenant = Tenant(name=payload.name, email=payload.email, mode=payload.mode)
+    64	    db.add(tenant)
+    65	    await db.flush()
+    66	    raw, prefix, key_hash = generate_api_key(mode=payload.mode)
+    67	    api_key = ApiKey(
+    68	        tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="default"
+    69	    )
+    70	    db.add(api_key)
+    71	    await db.commit()
+    72	    await db.refresh(tenant)
+    73	
+    74	    # Live tenants get the welcome+verify email. Test workspaces don't —
+    75	    # they're for integration testing, not a real human signup.
+    76	    if tenant.mode == "live":
+    77	        background.add_task(send_welcome_email, tenant, raw)
+    78	
+    79	    return {"tenant_id": tenant.id, "api_key": raw, "mode": tenant.mode}
+    80	
+    81	
+    82	# ── Email verification ────────────────────────────────────────────────
+    83	class VerifyPayload(BaseModel):
+    84	    token: str
+    85	
+    86	
+    87	@router.post("/verify-email")
+    88	async def verify_email(payload: VerifyPayload, db: AsyncSession = Depends(get_db)):
+    89	    try:
+    90	        tenant_id = verify_token(payload.token, expected_purpose="verify")
+    91	    except InvalidOnboardingToken as e:
+    92	        raise HTTPException(400, f"Invalid or expired verification link: {e}") from e
+    93	    tenant = await db.get(Tenant, tenant_id)
+    94	    if tenant is None:
+    95	        raise HTTPException(404, "Workspace not found")
+    96	    if tenant.email_verified_at is None:
+    97	        tenant.email_verified_at = datetime.utcnow()
+    98	        await db.commit()
+    99	    return {
+   100	        "tenant_id": tenant.id,
+   101	        "email": tenant.email,
+   102	        "email_verified_at": tenant.email_verified_at,
+   103	    }
+   104	
+   105	
+   106	# ── API key recovery (magic-link, rotates key) ────────────────────────
+   107	class RecoverRequest(BaseModel):
+   108	    email: str
+   109	
+   110	
+   111	@router.post("/recover/request")
+   112	async def recover_request(
+   113	    payload: RecoverRequest,
+   114	    background: BackgroundTasks,
+   115	    request: Request,
+   116	    db: AsyncSession = Depends(get_db),
+   117	):
+   118	    """Step 1: user enters email → we email them a magic link.
+   119	
+   120	    We always return 204, regardless of whether the email matches a real
+   121	    tenant, so this endpoint cannot be used to enumerate accounts.
+   122	    """
+   123	    # 3 recovery emails per IP per hour. Throttles harassment + cost-bomb.
+   124	    await rate_limit(request, bucket="recover", limit=3, window_seconds=3600)
+   125	    email = (payload.email or "").strip().lower()
+   126	    if "@" not in email:
+   127	        # never reveal whether email exists — always pretend success
+   128	        return {"ok": True}
+   129	    result = await db.execute(select(Tenant).where(Tenant.email == email))
+   130	    tenant = result.scalar_one_or_none()
+   131	    if tenant is not None:
+   132	        background.add_task(send_recovery_email, tenant)
+   133	    return {"ok": True}
+   134	
+   135	
+   136	class RecoverExchange(BaseModel):
+   137	    token: str
+   138	
+   139	
+   140	@router.post("/recover/exchange")
+   141	async def recover_exchange(
+   142	    payload: RecoverExchange, db: AsyncSession = Depends(get_db)
+   143	):
+   144	    """Step 2: dashboard POSTs the token from the magic link. We revoke all
+   145	    existing keys and issue a brand-new one. The new key is returned ONCE."""
+   146	    try:
+   147	        tenant_id = verify_token(payload.token, expected_purpose="recover")
+   148	    except InvalidOnboardingToken as e:
+   149	        raise HTTPException(400, f"Invalid or expired recovery link: {e}") from e
+   150	
+   151	    tenant = await db.get(Tenant, tenant_id)
+   152	    if tenant is None:
+   153	        raise HTTPException(404, "Workspace not found")
+   154	
+   155	    # revoke every active key on this tenant
+   156	    now = datetime.utcnow()
+   157	    existing = await db.execute(
+   158	        select(ApiKey).where(ApiKey.tenant_id == tenant.id, ApiKey.revoked_at.is_(None))
+   159	    )
+   160	    for k in existing.scalars():
+   161	        k.revoked_at = now
+   162	
+   163	    # issue a new key
+   164	    raw, prefix, key_hash = generate_api_key()
+   165	    db.add(
+   166	        ApiKey(
+   167	            tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="recovery"
+   168	        )
+   169	    )
+   170	    await db.commit()
+   171	    return {"tenant_id": tenant.id, "api_key": raw}
+   172	
+   173	
+   174	def _serialize_tenant(t: Tenant) -> dict:
+   175	    return {
+   176	        "id": t.id,
+   177	        "name": t.name,
+   178	        "email": t.email,
+   179	        "default_approvers": t.default_approvers or [],
+   180	        "email_verified_at": t.email_verified_at,
+   181	        "mode": t.mode,
+   182	        "created_at": t.created_at,
+   183	    }
+   184	
+   185	
+   186	@router.get("/me")
+   187	async def get_me(tenant: Tenant = Depends(get_current_tenant)):
+   188	    """Current tenant settings (default approvers, name, email)."""
+   189	    return _serialize_tenant(tenant)
+   190	
+   191	
+   192	@router.patch("/me")
+   193	async def update_me(
+   194	    payload: TenantSettingsUpdate,
+   195	    db: AsyncSession = Depends(get_db),
+   196	    tenant: Tenant = Depends(get_current_tenant),
+   197	):
+   198	    """Update mutable settings on the current tenant (currently: default_approvers)."""
+   199	    if payload.default_approvers is not None:
+   200	        normalized = [a.strip() for a in payload.default_approvers if isinstance(a, str) and a.strip()]
+   201	        for a in normalized:
+   202	            if not _is_supported_approver(a):
+   203	                raise HTTPException(
+   204	                    400,
+   205	                    f"Invalid approver '{a}'. Use email, 'mailto:...', or 'sms:+1...'."
+   206	                )
+   207	        tenant.default_approvers = normalized
+   208	    await db.commit()
+   209	    await db.refresh(tenant)
+   210	    return _serialize_tenant(tenant)
+     1	"""Admin endpoints, gated by a header-based bearer token.
+     2	
+     3	The token is set via the ADMIN_TOKEN env var on Railway. Endpoints here
+     4	are not exposed in the public OpenAPI schema (include_in_schema=False)
+     5	and should NEVER use the per-tenant API key auth — they operate across
+     6	tenants.
+     7	"""
+     8	from __future__ import annotations
+     9	
+    10	from datetime import datetime, timedelta
+    11	
+    12	from fastapi import APIRouter, Depends, Header, HTTPException
+    13	from sqlalchemy import and_, delete, func, select
+    14	from sqlalchemy.ext.asyncio import AsyncSession
+    15	
+    16	from app.config import settings
+    17	from app.db import get_db
+    18	from app.models import ApiKey, Approval, AuditEvent, Tenant
+    19	
+    20	router = APIRouter(include_in_schema=False)
+    21	
+    22	
+    23	def _check_admin(
+    24	    authorization: [REDACTED] | None = Header(default=None),
+    25	) -> None:
+    26	    """Reject unless Authorization: Bearer [REDACTED] settings.ADMIN_TOKEN."""
+    27	    expected = settings.ADMIN_TOKEN
+    28	    if not expected:
+    29	        raise HTTPException(503, "Admin endpoints disabled (ADMIN_TOKEN not set)")
+    30	    if not authorization or not authorization.lower().startswith("bearer "):
+    31	        raise HTTPException(401, "Missing admin token")
+    32	    token = authorization.split(" ", 1)[1].strip()
+    33	    if token != expected:
+    34	        raise HTTPException(403, "Invalid admin token")
+    35	
+    36	
+    37	@router.get("/admin/stats", dependencies=[Depends(_check_admin)])
+    38	async def stats(db: AsyncSession = Depends(get_db)) -> dict:
+    39	    """Quick tenant + activity stats."""
+    40	    total = (await db.execute(select(func.count(Tenant.id)))).scalar_one()
+    41	    verified = (
+    42	        await db.execute(
+    43	            select(func.count(Tenant.id)).where(Tenant.email_verified_at.is_not(None))
+    44	        )
+    45	    ).scalar_one()
+    46	    approvals = (await db.execute(select(func.count(Approval.id)))).scalar_one()
+    47	    audit = (await db.execute(select(func.count(AuditEvent.id)))).scalar_one()
+    48	    return {
+    49	        "tenants_total": total,
+    50	        "tenants_verified": verified,
+    51	        "tenants_unverified": total - verified,
+    52	        "approvals_total": approvals,
+    53	        "audit_events_total": audit,
+    54	    }
+    55	
+    56	
+    57	@router.post("/admin/purge-unverified", dependencies=[Depends(_check_admin)])
+    58	async def purge_unverified(
+    59	    older_than_days: int = 30,
+    60	    dry_run: bool = True,
+    61	    db: AsyncSession = Depends(get_db),
+    62	) -> dict:
+    63	    """Delete tenants that signed up more than `older_than_days` ago and
+    64	    never verified their email. Cascades to api_keys + approvals + audit_events.
+    65	
+    66	    Defaults to dry_run=True — pass dry_run=false to actually delete.
+    67	    """
+    68	    if older_than_days < 1:
+    69	        raise HTTPException(400, "older_than_days must be >= 1")
+    70	
+    71	    cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+    72	    q = await db.execute(
+    73	        select(Tenant).where(
+    74	            and_(
+    75	                Tenant.email_verified_at.is_(None),
+    76	                Tenant.created_at < cutoff,
+    77	            )
+    78	        )
+    79	    )
+    80	    targets = list(q.scalars())
+    81	
+    82	    sample = [{"id": t.id, "email": t.email, "created_at": str(t.created_at)} for t in targets[:5]]
+    83	
+    84	    if dry_run:
+    85	        return {
+    86	            "dry_run": True,
+    87	            "older_than_days": older_than_days,
+    88	            "cutoff": cutoff.isoformat(),
+    89	            "would_delete": len(targets),
+    90	            "sample": sample,
+    91	        }
+    92	
+    93	    deleted_keys = 0
+    94	    deleted_approvals = 0
+    95	    deleted_audit = 0
+    96	    for t in targets:
+    97	        # delete dependent rows first to avoid FK violations
+    98	        r = await db.execute(delete(AuditEvent).where(AuditEvent.tenant_id == t.id))
+    99	        deleted_audit += r.rowcount or 0
+   100	        r = await db.execute(delete(ApiKey).where(ApiKey.tenant_id == t.id))
+   101	        deleted_keys += r.rowcount or 0
+   102	        r = await db.execute(delete(Approval).where(Approval.tenant_id == t.id))
+   103	        deleted_approvals += r.rowcount or 0
+   104	        await db.execute(delete(Tenant).where(Tenant.id == t.id))
+   105	    await db.commit()
+   106	
+   107	    return {
+   108	        "dry_run": False,
+   109	        "older_than_days": older_than_days,
+   110	        "deleted_tenants": len(targets),
+   111	        "deleted_api_keys": deleted_keys,
+   112	        "deleted_approvals": deleted_approvals,
+   113	        "deleted_audit_events": deleted_audit,
+   114	        "sample": sample,
+   115	    }
+   116	

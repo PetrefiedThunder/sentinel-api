@@ -1,0 +1,263 @@
+.venv/bin/python
+.venv/bin/python3
+.venv/bin/python3.13
+repos:
+  # Ruff: lint + format (replaces black + isort + flake8)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # Standard hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+
+  # gitleaks: prevent committing secrets
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+    55	
+    56	## Architecture
+    57	
+    58	See [ARCHITECTURE.md](ARCHITECTURE.md) for the five-repository system map and
+    59	[the ADR index](docs/adr/README.md) for recorded design decisions.
+    60	
+    61	## Run locally
+    62	
+    63	Prerequisites: Python 3.11 or newer, PostgreSQL, and
+    64	[`uv`](https://docs.astral.sh/uv/). This repository does not include a Docker
+    65	Compose stack, so start PostgreSQL using your preferred local method. Redis is
+    66	recommended for shared rate limiting; the service fails open when Redis is
+    67	unavailable.
+    68	
+    69	```bash
+    70	git clone https://github.com/PetrefiedThunder/sentinel-api
+    71	cd sentinel-api
+    72	
+    73	uv venv
+    74	source .venv/bin/activate
+    75	uv pip install -e ".[dev]"
+    76	
+    77	cp .env.example .env
+    78	createdb sentinel
+    79	export DATABASE_URL="postgresql+asyncpg://localhost/sentinel"
+    80	export REDIS_URL="redis://localhost:6379/0"
+    81	export JWT_SECRET="$(openssl rand -hex 32)"
+    82	
+    83	alembic upgrade head
+    84	uvicorn app.main:app --reload --port 8000
+    85	```
+    86	
+    87	Check the process and open the local API documentation:
+    88	
+    89	```bash
+    90	curl http://127.0.0.1:8000/health
+    91	open http://127.0.0.1:8000/docs
+    92	```
+    93	
+    94	Use `xdg-open` instead of `open` on most Linux desktops.
+    95	
+    96	## Create a local test approval
+    97	
+    98	A test workspace returns an `sk_test_...` key and suppresses real email and SMS
+    99	delivery. Signup requires a work-domain email; `example.com` is suitable for
+   100	local development.
+   101	
+   102	```bash
+   103	curl -sS http://127.0.0.1:8000/v1/tenants/signup \
+   104	  -H 'Content-Type: application/json' \
+   105	  -d '{"name":"Local Demo","email":"developer@example.com","mode":"test"}'
+   106	```
+   107	
+   108	Copy the returned key, then create an approval. Reuse the same
+   109	`Idempotency-Key` only when retrying the exact same request.
+   110	
+   111	```bash
+   112	export SENTINEL_API_KEY='sk_test_...'
+   113	
+   114	curl -sS http://127.0.0.1:8000/v1/approvals \
+   115	  -H "Authorization: Bearer [REDACTED]" \
+   116	  -H 'Content-Type: application/json' \
+   117	  -H 'Idempotency-Key: readme-demo-001' \
+   118	  -d '{
+   119	    "function_name":"publish_draft",
+   120	    "arguments":{"draft_id":"demo-1"},
+   121	    "risk_level":"low",
+   122	    "approvers":["reviewer@example.com"],
+   123	    "timeout_seconds":300
+   124	  }'
+   125	```
+   126	
+   127	Copy the returned `action_id` to exercise the direct decision path:
+   128	
+   129	```bash
+   130	export ACTION_ID='act_...'
+   131	
+   132	curl -sS "http://127.0.0.1:8000/v1/approvals/$ACTION_ID/decision" \
+   133	  -H "Authorization: Bearer [REDACTED]" \
+   134	  -H 'Content-Type: application/json' \
+   135	  -d '{"decision":"approved","decided_by":"local-reviewer"}'
+   136	```
+   137	
+   138	## Configuration
+   139	
+   140	Settings are read from environment variables and an optional `.env` file.
+   141	Provider-backed features remain disabled or become no-ops when their credentials
+   142	are absent, as noted below.
+   143	
+   144	| Variable | Requirement | Purpose |
+   145	|---|---|---|
+   146	| `DATABASE_URL` | required | PostgreSQL connection URL; plain `postgresql://` values are normalized for asyncpg |
+   147	| `REDIS_URL` | recommended in production | Redis URL for shared request-rate counters; limiting fails open when unavailable |
+   148	| `JWT_SECRET` | required | Strong random secret, at least 32 bytes, for approval and onboarding links |
+   149	| `READ_REPLICA_URL` | optional | Replica DSN for code paths that use read sessions |
+   150	| `PUBLIC_APP_URL` | required for approval links | Dashboard origin that serves `/approve/{id}` |
+   151	| `PUBLIC_API_URL` | required for provider callbacks | Public API origin used in Twilio status callbacks |
+   152	| `DEFAULT_APPROVERS` | optional | Comma-separated fallback email or `sms:+1...` approvers |
+   153	| `IDEMPOTENCY_INPROGRESS_TTL_SECONDS` | optional | Legacy/in-progress claim threshold; default `30` seconds |
+   154	| `RESEND_API_KEY` | required for email | Resend credential; email is skipped when empty |
+   155	| `EMAIL_FROM`, `EMAIL_REPLY_TO` | optional | Outbound email identities |
+    24	# Initialize Sentry as early as possible so import-time errors are captured too.
+    25	if settings.SENTRY_DSN:
+    26	    import sentry_sdk
+    27	    sentry_sdk.init(
+    28	        dsn=settings.SENTRY_DSN,
+    29	        environment=settings.SENTRY_ENVIRONMENT,
+    30	        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+    31	        send_default_pii=False,  # never send phone/email/approval payloads
+    32	        max_breadcrumbs=50,
+    33	    )
+    34	
+    35	
+    36	@asynccontextmanager
+    37	async def lifespan(app: FastAPI):
+    38	    await bus.start()
+    39	    try:
+    40	        yield
+    41	    finally:
+    42	        await bus.stop()
+    43	
+    44	
+    45	app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
+    46	
+    47	# Request context — stamps request_id + method + route on every log line,
+    48	# emits a structured "request.completed" record. Must be added BEFORE the
+    49	# CORS middleware so it wraps the inner handler chain.
+    50	app.add_middleware(RequestContextMiddleware)
+    51	
+    52	app.add_middleware(
+    53	    CORSMiddleware,
+    54	    allow_origins=[
+    55	        "https://pauseapi.app",
+    56	        "https://app.pauseapi.app",
+    57	        "http://localhost:3000",
+    58	    ],
+    59	    allow_methods=["*"],
+    60	    allow_headers=["*"],
+    61	    allow_credentials=True,
+    62	)
+    63	
+    64	app.include_router(tenants.router, prefix="/v1/tenants", tags=["tenants"])
+    65	app.include_router(approvals.router, prefix="/v1/approvals", tags=["approvals"])
+    66	app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tags=["approver-contacts"])
+    67	app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
+    68	app.include_router(twilio_webhooks.router)
+    69	app.include_router(webhooks.router, prefix="/v1/webhooks", tags=["webhooks"])
+    70	app.include_router(status_history.router, prefix="/v1/status", tags=["status"])
+    71	app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
+    72	app.include_router(admin.router, prefix="/v1", tags=["admin"])
+    73	
+    74	
+    75	@app.get("/health")
+    76	async def health():
+    77	    return {"status": "ok", "bus": bus._started}
+    94	- **Audit log is append-only, hash-chained.** `event_hash = sha256(prev_hash + canonical_json(payload))`. Verifiable offline.
+    95	- **API keys are stored as hash, never plaintext.** Raw value shown ONCE on signup or via the recover/exchange flow.
+    96	- **Webhook secrets are stored plaintext (intentional)** — they're per-tenant, per-endpoint, and only used to sign outbound POSTs. If the DB is compromised, attacker can spoof webhook deliveries to that specific customer; we accept this trade-off vs. the operational pain of derived-key schemes.
+    97	- **Per-tenant default approvers** resolve in order: caller's explicit list → `tenant.default_approvers` → global `DEFAULT_APPROVERS` env var → 400 error.
+    98	- **Email-verified state is informational, not enforced.** A tenant can use Sentinel before verifying email. We track `email_verified_at` so a future "verified Pro plan only" gate is possible.
+    99	
+   100	## Hosting topology
+   101	
+   102	| Surface | Host | Region | Why |
+   103	|---|---|---|---|
+   104	| `pauseapi.app` (landing + docs) | Vercel | global edge | static + ISR; low TTFB everywhere |
+   105	| `app.pauseapi.app` (dashboard) | Vercel | global edge | Next.js SSR |
+   106	| `api.pauseapi.app` (API origin) | Vercel proxy → Railway | us-east | edge TLS in front of single-region origin saves the cross-region round-trip on TLS handshake |
+   107	| Postgres | Railway | us-east | colocated with API |
+   108	| Redis | Railway | us-east | rate limit counters; tolerable to lose |
+   109	
+   110	## Data flows
+   111	
+   112	### Approval creation (write-heavy path)
+   113	
+   114	```
+   115	SDK -POST-> Vercel edge -proxy-> Railway -INSERT-> Postgres
+   116	                                      └-async-> Resend HTTP / Twilio HTTP
+   117	                                      └-INSERT-> audit_events
+   118	```
+   119	
+   120	p50: 53 ms POST → 201
+   121	p95: 84 ms
+   122	
+   123	### Decision propagation (latency-critical)
+   124	
+   125	```
+   126	Approver clicks Approve  → Browser POST /v1/approvals/.../token-decision
+   127	                          → Railway UPDATE Postgres
+   128	                          → Postgres NOTIFY sentinel_decisions
+   129	                          → Railway LISTEN handler resolves the SDK's wait
+   130	                          → SDK returns from wait_for_decision()
+   131	```
+   132	
+   133	Click-to-unblock: p99 < 130 ms.
+   134	
+   135	### Webhook fan-out (async, retryable)
+   136	
+   137	```
+   138	Decision happens → background task per registered endpoint:
+   139	                   attempt 1 → POST customer URL with HMAC sig
+   140	                   if 5xx or network error → sleep 1s → attempt 2
+   141	                                          → sleep 4s → attempt 3
+   142	                                          → record terminal failure
+   143	                   if 2xx → record success
+   144	                   if 4xx (except 408/429) → record terminal rejection
+   145	```
+   146	
+   147	Webhook deliveries never block the decision endpoint return.
+   148	
+   149	## Multi-tenancy model
+   150	
+   151	- One workspace = one `tenants` row
+   152	- Per-tenant: API keys, approvals, audit events, webhook endpoints, SMS consent contacts, billing state
+   153	- Row-level scoping enforced at the application layer via `tenant: Tenant = Depends(get_current_tenant)` on every authenticated endpoint
+   154	- Admin endpoints (`/v1/admin/*`) bypass tenant scoping but require `ADMIN_TOKEN` instead of an API key
+   155	
+   156	## Deploy topology
+   157	
+   158	```
+   159	git push origin main
+   160	   ├─► sentinel-api    → Railway auto-deploy (build + alembic upgrade + uvicorn)
+   161	   ├─► sentinel-dash   → Vercel auto-deploy
+   162	   ├─► oversight-land  → Vercel auto-deploy
+   163	   └─► sentinel-sdk    → no deploy; on tag v* → GH Actions → PyPI Trusted Publishing
+   164	   └─► sentinel-sdk-js → no deploy; on tag v* → GH Actions → npm Trusted Publishing
+   165	```
+FRONTEND-LOG.md
+artifacts
+backend-commands.jsonl
+frontend-commands.jsonl
+lead-commands.jsonl
+run.py
+ux-commands.jsonl

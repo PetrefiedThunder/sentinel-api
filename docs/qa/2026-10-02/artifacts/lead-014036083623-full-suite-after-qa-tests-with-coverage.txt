@@ -1,0 +1,214 @@
+........................................................................ [ 23%]
+..................................................................ssssss [ 46%]
+ssssssssssss.ssssssss................................................... [ 69%]
+.......xxxxx.........xxxxx.xx.xxxxxxxx........................x......... [ 92%]
+.......................                                                  [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/fastapi/testclient.py:1
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+tests/test_approval_sms_consent.py: 6 warnings
+tests/test_approver_contacts.py: 2 warnings
+tests/test_chain_verify.py: 12 warnings
+tests/test_coverage_admin.py: 11 warnings
+tests/test_coverage_audit_router.py: 19 warnings
+tests/test_coverage_billing.py: 13 warnings
+tests/test_coverage_contacts_service.py: 7 warnings
+tests/test_coverage_tenants.py: 22 warnings
+tests/test_coverage_webhooks.py: 19 warnings
+tests/test_cursor_pagination.py: 29 warnings
+tests/test_decision_atomicity.py: 130 warnings
+tests/test_idempotency_race.py: 14 warnings
+tests/test_idempotency_replay.py: 23 warnings
+tests/test_idempotency_ttl.py: 17 warnings
+tests/test_middleware_contract.py: 15 warnings
+tests/test_notifications.py: 9 warnings
+tests/test_qa_backend.py: 476 warnings
+tests/test_qa_contract.py: 25 warnings
+tests/test_read_replica.py: 1 warning
+tests/test_status_history.py: 6 warnings
+tests/test_token_decision_replay.py: 16 warnings
+tests/test_tsa.py: 7 warnings
+tests/test_twilio_webhooks.py: 11 warnings
+tests/test_webhook_dispatch.py: 5 warnings
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.venv/lib/python3.13/site-packages/sqlalchemy/sql/schema.py:4296: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return util.wrap_callable(lambda ctx: fn(), fn)  # type: ignore[call-arg, no-any-return, no-untyped-call]  # noqa: E501
+
+tests/test_approval_sms_consent.py: 3 warnings
+tests/test_approver_contacts.py: 2 warnings
+tests/test_chain_verify.py: 4 warnings
+tests/test_coverage_admin.py: 7 warnings
+tests/test_coverage_audit_router.py: 6 warnings
+tests/test_coverage_billing.py: 13 warnings
+tests/test_coverage_tenants.py: 16 warnings
+tests/test_coverage_webhooks.py: 6 warnings
+tests/test_cursor_pagination.py: 9 warnings
+tests/test_idempotency_race.py: 3 warnings
+tests/test_idempotency_replay.py: 6 warnings
+tests/test_idempotency_ttl.py: 6 warnings
+tests/test_middleware_contract.py: 5 warnings
+tests/test_status_history.py: 5 warnings
+tests/test_token_decision_replay.py: 4 warnings
+tests/test_tsa.py: 1 warning
+tests/test_twilio_webhooks.py: 3 warnings
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.venv/lib/python3.13/site-packages/pytest_socket/__init__.py:115: UserWarning: A test tried to use socket.getaddrinfo.
+    raise SocketBlockedError("A test tried to use socket.getaddrinfo.")
+
+tests/test_coverage_admin.py::test_stats_returns_counts
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/tests/test_coverage_admin.py:67: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    tenant.email_verified_at = datetime.utcnow()
+
+tests/test_coverage_admin.py::test_purge_dry_run_reports_targets
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/tests/test_coverage_admin.py:109: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    created_at=datetime.utcnow() - timedelta(days=60),
+
+tests/test_coverage_admin.py::test_purge_dry_run_reports_targets
+tests/test_coverage_admin.py::test_purge_actually_deletes_with_cascade
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/routers/admin.py:71: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+
+tests/test_coverage_admin.py::test_purge_actually_deletes_with_cascade
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/tests/test_coverage_admin.py:136: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    created_at=datetime.utcnow() - timedelta(days=60),
+
+tests/test_coverage_billing.py::test_webhook_checkout_completed_upgrades_to_pro
+tests/test_coverage_billing.py::test_webhook_subscription_deleted_downgrades
+tests/test_coverage_billing.py::test_webhook_subscription_updated_status_canceled
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/routers/billing.py:150: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_coverage_tenants.py::test_verify_email_with_valid_token
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/routers/tenants.py:97: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    tenant.email_verified_at = datetime.utcnow()
+
+tests/test_coverage_tenants.py::test_recover_exchange_rotates_keys
+tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key
+tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key
+tests/test_qa_backend.py::test_recovered_key_keeps_test_workspace_mode
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/routers/tenants.py:156: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_coverage_webhooks.py::test_disable_webhook_soft_deletes
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/routers/webhooks.py:119: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    endpoint.disabled_at = datetime.utcnow()
+
+tests/test_coverage_webhooks.py::test_build_payload_shape
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/services/webhooks.py:93: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "created_at": datetime.utcnow().isoformat() + "Z",
+
+tests/test_delivery_outbox_migration.py: 2 warnings
+tests/test_migrations_roundtrip.py: 40 warnings
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/.venv/lib/python3.13/site-packages/alembic/config.py:604: DeprecationWarning: No path_separator found in configuration; falling back to legacy splitting on spaces, commas, and colons for prepend_sys_path.  Consider adding path_separator=os to Alembic config.
+    util.warn_deprecated(
+
+tests/test_idempotency_postgres.py::test_precommit_failure_rolls_back_real_approval
+  /Users/sellers/.local/share/uv/python/cpython-3.13.14-macos-aarch64-none/lib/python3.13/inspect.py:2512: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x10d4718a0>
+    _get_signature_of = functools.partial(_signature_from_callable,
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_idempotency_postgres.py::test_precommit_failure_rolls_back_real_approval
+  /Users/sellers/.local/share/uv/python/cpython-3.13.14-macos-aarch64-none/lib/python3.13/inspect.py:2512: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x109fd3010>
+    _get_signature_of = functools.partial(_signature_from_callable,
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_middleware_contract.py::test_timed_out_approval_stays_pending_server_side
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/tests/test_middleware_contract.py:125: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    .values(created_at=dt.datetime.utcnow() - dt.timedelta(days=2))
+
+tests/test_status_history.py::test_history_aggregates_daily_and_is_public
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/tests/test_status_history.py:82: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+tests/test_status_history.py::test_history_aggregates_daily_and_is_public
+tests/test_status_history.py::test_history_days_param_bounds
+tests/test_status_history.py::test_history_days_param_bounds
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/app/routers/status_history.py:56: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+tests/test_status_history.py::test_history_days_param_bounds
+  /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api/tests/test_status_history.py:130: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    long_ago = datetime.utcnow() - timedelta(days=40)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+______________ coverage: platform darwin, python 3.13.14-final-0 _______________
+
+Name                                    Stmts   Miss  Cover   Missing
+---------------------------------------------------------------------
+app/__init__.py                             0      0   100%
+app/auth.py                                29      9    69%   39-48
+app/config.py                              32      1    97%   56
+app/db.py                                  25      2    92%   40-41
+app/logging_setup.py                       52      3    94%   113-114, 130
+app/main.py                                32      3    91%   26-27, 77
+app/models.py                             137      0   100%
+app/routers/__init__.py                     0      0   100%
+app/routers/admin.py                       48     21    56%   41-48, 80-107
+app/routers/approvals.py                  148     30    80%   35, 75, 81, 118-120, 123, 141-156, 162-163, 173-175, 196, 200, 243, 273
+app/routers/approver_contacts.py           23      4    83%   34, 52-54
+app/routers/audit.py                       80     25    69%   49, 55-59, 82, 85, 108-128, 151, 154-156, 190
+app/routers/billing.py                    122     26    79%   41-53, 118-119, 137-139, 147-148, 158-159, 165, 168, 173-176, 207-208
+app/routers/status_history.py              33      9    73%   43, 61-69
+app/routers/tenants.py                     99     28    72%   61-79, 95, 99, 130-133, 153, 160-171, 209-210
+app/routers/twilio_webhooks.py             54      9    83%   25, 40, 48-56, 67, 79-87
+app/routers/webhooks.py                    62     11    82%   90-91, 116-121, 139, 146, 151
+app/schemas.py                            103      2    98%   30, 122
+app/services/__init__.py                    0      0   100%
+app/services/approval_service.py           25      8    68%   17-20, 50-62
+app/services/approval_tokens.py            52      4    92%   30, 60-61, 67
+app/services/audit_log.py                  24      1    96%   26
+app/services/contacts.py                   83      0   100%
+app/services/decision_bus.py               69      9    87%   46, 49-51, 58-62
+app/services/idempotency.py                84      4    95%   154-156, 159
+app/services/nonce_store.py                10      0   100%
+app/services/notification_attempts.py      47     13    72%   84-100
+app/services/notifications.py             108     16    85%   27, 32-33, 43, 46-47, 49, 75-76, 91, 113-114, 163-164, 180, 186
+app/services/onboarding.py                 72      6    92%   67-68, 75, 112-115
+app/services/pagination.py                 41      8    80%   78-86
+app/services/rate_limit.py                 47     15    68%   27-29, 39, 42, 73, 83-100, 115
+app/services/tsa.py                        80      8    90%   81, 94, 113-114, 124-125, 127, 149
+app/services/webhooks.py                   90     33    63%   134-171, 186-192
+---------------------------------------------------------------------
+TOTAL                                    1911    308    84%
+Coverage JSON written to file docs/qa/2026-10-02/artifacts/coverage-after.json
+Required test coverage of 70.0% reached. Total coverage: 83.88%
+=========================== short test summary info ============================
+SKIPPED [5] tests/test_decision_postgres.py:139: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [1] tests/test_decision_postgres.py:198: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [1] tests/test_decision_postgres.py:234: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [4] tests/test_decision_postgres.py:262: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [2] tests/test_decision_postgres.py:290: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [2] tests/test_decision_postgres.py:323: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [1] tests/test_decision_postgres.py:339: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [2] tests/test_decision_postgres.py:357: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [3] tests/test_idempotency_postgres.py:162: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [1] tests/test_idempotency_postgres.py:235: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [1] tests/test_idempotency_postgres.py:256: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [1] tests/test_idempotency_postgres.py:277: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [1] tests/test_idempotency_postgres.py:311: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+SKIPPED [1] tests/test_idempotency_postgres.py:326: set SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL to opt into disposable PostgreSQL tests
+XFAIL tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key - BE-001: recovery token can rotate keys repeatedly
+XFAIL tests/test_qa_backend.py::test_onboarding_rejects_weak_signing_configuration - BE-002: onboarding accepts the known weak signing default
+XFAIL tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://127.0.0.1/hook] - BE-003: private webhook targets are accepted without an egress guard
+XFAIL tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://10.0.0.1/hook] - BE-003: private webhook targets are accepted without an egress guard
+XFAIL tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://[::1]/hook] - BE-003: private webhook targets are accepted without an egress guard
+XFAIL tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/approvals/act_qa_owner/token-decision] - BE-004: non-ASCII token signatures produce HTTP 500
+XFAIL tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/tenants/recover/exchange] - BE-004: non-ASCII token signatures produce HTTP 500
+XFAIL tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/tenants/verify-email] - BE-004: non-ASCII token signatures produce HTTP 500
+XFAIL tests/test_qa_backend.py::test_recovered_key_keeps_test_workspace_mode - BE-005: recovery emits a live key prefix for a test workspace
+XFAIL tests/test_qa_backend.py::test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver - BE-006: fallback SMS approvers skip create-time consent validation
+XFAIL tests/test_qa_backend.py::test_unsigned_twilio_callback_cannot_change_multiple_tenants[False] - BE-007: absent Twilio auth configuration accepts unsigned mutations
+XFAIL tests/test_qa_backend.py::test_audit_csv_neutralizes_spreadsheet_formula_cells - BE-008: audit CSV exports untrusted formula cells unchanged
+XFAIL tests/test_qa_contract.py::test_openapi_types_primary_approval_responses[/v1/approvals-post] - FE-001: approval success schemas are unconstrained
+XFAIL tests/test_qa_contract.py::test_openapi_types_primary_approval_responses[/v1/approvals-get] - FE-001: approval success schemas are unconstrained
+XFAIL tests/test_qa_contract.py::test_openapi_types_primary_approval_responses[/v1/approvals/{action_id}-get] - FE-001: approval success schemas are unconstrained
+XFAIL tests/test_qa_contract.py::test_openapi_types_primary_approval_responses[/v1/approvals/{action_id}/wait-get] - FE-001: approval success schemas are unconstrained
+XFAIL tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints[ApprovalCreate-timeout_seconds-expected0] - FE-002: validator bounds/enums are absent from OpenAPI
+XFAIL tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints[ApprovalCreate-risk_level-expected1] - FE-002: validator bounds/enums are absent from OpenAPI
+XFAIL tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints[TenantSignup-mode-expected2] - FE-002: validator bounds/enums are absent from OpenAPI
+XFAIL tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime - FE-003: CSV download is documented as application/json
+XFAIL tests/test_qa_dx.py::test_contributing_single_file_test_example_exists - UX-002: CONTRIBUTING names a nonexistent test file
+264 passed, 26 skipped, 21 xfailed, 1060 warnings in 9.17s

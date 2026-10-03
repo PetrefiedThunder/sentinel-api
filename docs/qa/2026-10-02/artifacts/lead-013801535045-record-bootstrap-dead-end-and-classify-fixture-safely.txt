@@ -1,0 +1,3 @@
+Tracked secret candidate context: def test_send_welcome_email_invokes_send(monkeypatch):
+candidate synthetically generated test fixture: True length: 86
+contains repeated synthetic marker: True

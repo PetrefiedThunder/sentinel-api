@@ -1,0 +1,21 @@
+{
+  "current_paths": 24,
+  "current_operations": 29,
+  "baseline_operation_removals": [],
+  "operation_additions": [],
+  "baseline_differing_json_pointers": [],
+  "signup_mode_schema": {
+    "type": "string",
+    "title": "Mode",
+    "default": "live"
+  },
+  "csv_response": {
+    "description": "Successful Response",
+    "content": {
+      "application/json": {
+        "schema": {}
+      }
+    }
+  }
+}
+Unconstrained success schemas: 28

@@ -1,0 +1,407 @@
+# QA plan — 2026-10-02
+
+PR: opened by orchestrator
+CI status: pending at time of writing
+
+## Identity and limits
+
+Repository: PetrefiedThunder/sentinel-api. Worktree: /Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api. Branch: qa/2026-10-02-sweep. Starting commit: cfe4270. Initial working tree was clean. Work began 2026-10-03 UTC (2026-10-02 America/Los_Angeles). Changes remain uncommitted for orchestrator review. No product changes planned.
+
+No repository AGENTS.md was found; supplied shared instructions and orchestrator override apply. No git commit/push, PR creation, deploy, real provider calls, billing, credential files or environment files. No CI, migration, deploy, or environment-file edits. Existing migration tests may use disposable SQLite files only. No existing databases will be used.
+
+## Repository map
+
+- Python 3.11+ FastAPI app: app/main.py and app/routers/{approvals,tenants,approver_contacts,audit,billing,admin,webhooks,twilio_webhooks,status_history}.py.
+- Persistence: SQLAlchemy async app/models.py, app/db.py; Alembic revisions 001–012. PostgreSQL production semantics differ from SQLite.
+- Critical services: approval_tokens, nonce_store, approval_service, idempotency, audit_log, decision_bus, notifications, webhooks, rate_limit.
+- Tests: pytest unit/service/ASGI routes, migration round trips, explicitly opt-in PostgreSQL race tests. Coverage gate 70 percent in pyproject.toml.
+- Consumer contract: docs/openapi.baseline.json, tests/test_middleware_contract.py; integration consumers are outside this checkout.
+- Developer interface: README.md, ARCHITECTURE.md, SECURITY.md, CONTRIBUTING.md, generated FastAPI Swagger/ReDoc pages. No frontend source, npm build, components, mobile app, or frontend unit/E2E suite.
+- CI: .github/workflows/ci.yml: Ruff, pytest, oasdiff, advisory scan, gitleaks. Remote state deliberately unqueried.
+
+## Risk ranking
+
+Impact and likelihood are each 1–5; score is their product, used to allocate time rather than claim incident probability.
+
+| Rank | Surface | Impact | Likelihood | Score | Primary evidence |
+|---|---|---:|---:|---:|---|
+| 1 | Authentication, cross-tenant reads/writes, signed recovery/decision links | 5 | 4 | 20 | Negative auth matrix and replay cases |
+| 2 | Approval decisions, atomicity, idempotency/concurrency | 5 | 4 | 20 | Existing race/rollback tests plus missing boundary cases |
+| 3 | Audit-chain integrity and externally triggered callbacks | 5 | 3 | 15 | Existing evidence/signature tests; bounded adversarial inputs |
+| 4 | Notification/webhook dispatch and untrusted destination URLs | 4 | 3 | 12 | Mocked-provider tests and OWASP API review |
+| 5 | Published OpenAPI versus runtime behavior | 4 | 3 | 12 | Baseline/current schema and route contract tests |
+| 6 | Setup, discoverability, errors, accessibility of developer docs | 3 | 3 | 9 | Quickstart walkthrough, local docs browser, axe and keyboard |
+| 7 | Dependency advisories, lint and types | 3 | 3 | 9 | Fresh dev environment, static tools, public package metadata |
+
+## Three independent passes
+
+### Pass 1 — Backend QA
+
+Owner backend, separate BACKEND-LOG.md and backend-commands.jsonl. Auth/permissions matrix, replay, idempotency/rollback, audit integrity, and an OWASP API Top 10 checklist. Start with existing suite and coverage, then add narrow regression and property-style boundary cases. Property tooling is installed only in the QA virtual environment if useful; no runtime dependency changes. Mock provider integrations; use ASGI or in-memory SQLite and reject network sockets. Written timeboxed exploratory charters record assumptions and outcomes. PostgreSQL concurrency is not claimed proven by SQLite. Approval timeout semantics must follow the documented wait-budget contract.
+
+### Pass 2 — Frontend QA (substitute: consumer/API contract)
+
+Owner frontend, separate FRONTEND-LOG.md and frontend-commands.jsonl. No product frontend, so React/unit/build/mobile-app tests and product Lighthouse are not applicable. Review generated OpenAPI against baseline and HTTP behavior, schema validation boundaries, structured errors, content types, CORS and streaming expectations where relevant. This lens directly protects SDK and dashboard consumers. Add ASGI route and schema tests, recording real bugs as strict expected failures with FE IDs.
+
+### Pass 3 — UX QA (substitute: developer experience and API documentation)
+
+Owner ux, separate UX-LOG.md and ux-commands.jsonl. Walk through README setup, local examples and common failure recovery without executing provider/deployment steps. Apply Nielsen's ten heuristics to the developer journey. Exercise locally served generated Swagger documentation with external assets fulfilled from downloaded public packages; all browser external requests blocked. Use the orchestrator's already-running Playwright browser server via connect only, never browser launch/install. Capture screenshots at desktop/mobile widths, automated axe WCAG AA results and keyboard/semantic observations. Try available browser families; distinguish server/browser limitations. Automated checks are not a full screen-reader or WCAG conformance certification.
+
+## Test strategy and evidence
+
+Test pyramid: broad existing unit/service checks, focused negative-path ASGI integration tests, small documentation UI smoke. Baseline full suite is captured before new QA tests; final identical coverage settings allow before/after comparison. Network-blocking pytest harness disables Pydantic environment-file loading before importing app. Existing explicit PostgreSQL opt-ins remain unset. All executions through run.py create UTC start/end, exact command, exit code and sanitized output artifacts. Bootstrap pre-logger commands are backfilled transparently. Commands for QA-doc creation and formatting are logged too. No secret values in artifacts.
+
+Findings require reproducible evidence with file:line, expected/actual and suggested fixes. Security severity follows demonstrated impact; unverified deployment conditions remain gaps. Added failing regressions use strict xfail and the finding ID. Existing failing checks will be reported unchanged. No fixes to product behavior planned.
+
+## Timeboxes and exclusions
+
+Target 60–90 minutes overall, parallel independent passes. Initial map/environment/baseline about 10 minutes; risk exploration and tests 25–35 minutes; browser/DX 20–30 minutes; reconciliation and independent review 10–15 minutes. Charters record actual elapsed time rather than inventing session duration.
+
+Out of scope: production/service health, paid requests, provider delivery, actual Stripe charges, Twilio/Resend/TSA/Sentry connections, deployment secrets/settings, real PostgreSQL/Redis infrastructure, cross-repo dashboard and SDK behavior, external CodeRabbit review (would send code to a third-party API), and remote GitHub checks/PR operations. Public package installation and package advisory metadata are the only external research network allowed. The orchestrator owns secret scan, commit, push and one draft PR.
+# QA findings — 2026-10-02
+
+PR: opened by orchestrator
+CI status: pending at time of writing
+
+**16 confirmed findings: Critical=0, High=4, Medium=8, Low=4.** These are local code, synthetic-data, documentation and browser results. Deployed configuration, credentials, existing databases and real providers were not inspected. No product fixes were made.
+
+To reproduce executable backend findings safely, run the recorded command below with the selected test node from the table. It operates only against test fixtures and deliberately unmasks the documented bug; normal test runs retain strict xfails. API-contract tests use the same wrapper and corresponding tests/test_qa_contract.py node. Bootstrap disables .env reads and all TCP connections. The installed QA tooling and commands are recorded in SESSION-LOG.md; no secrets are required.
+
+    python3 docs/qa/2026-10-02/run.py --group backend --label 'Reproduce finding' '.venv/bin/python docs/qa/2026-10-02/pytest_safe.py tests/test_qa_backend.py -q --no-cov --runxfail --tb=short'
+
+For UX-004, the exact dependency-install and harness commands are in ux-commands.jsonl and SESSION-LOG.md; the browser harness is ux_browser.py plus ux_browser.cjs. It connects to the prestarted browser server and blocks production/external requests.
+
+High items BE-002 and BE-007 are explicitly configuration-dependent. BE-003 demonstrates accepted destinations and mocked delivery, not actual private-network reachability. Finding counts are defects, not parameterized xfail case counts. Four axe rule families are consolidated into UX-004 rather than counted as 105 distinct bugs.
+
+| ID | Severity | Group | Title | Exact repro steps | Expected vs actual | Evidence | Suggested fix |
+|---|---|---|---|---|---|---|---|
+| BE-001 | High | Backend | Recovery link remains usable after key rotation | In `test_recovery_token_is_single_use_and_preserves_first_recovered_key`, create a recovery token for the synthetic owner, POST it to `/v1/tenants/recover/exchange`, then POST the same token again; inspect the first recovered key row. | Expected: second exchange rejected and first recovered key remains active. Actual: second exchange returns 200, revokes the freshly recovered key, and issues another key. A party retaining the link can repeatedly regain access until expiry. | `app/routers/tenants.py:147`, `app/routers/tenants.py:157`; named test in `tests/test_qa_backend.py`; [unmasked failures](artifacts/backend-013811784440-confirm-known-backend-defects-without-expected-failure-masking.txt). | Consume a recovery nonce atomically with revocation/issuance; enforce uniqueness under concurrent redemption; add replay and concurrent redemption tests. |
+| BE-002 | High | Backend | Onboarding accepts known weak signing configuration | In `test_onboarding_rejects_weak_signing_configuration`, substitute the declared default signing value in memory and call onboarding's signing primitive with a non-token payload. The separate offline source-function check also round-trips a synthetic recovery token. | Expected: reject weak/default configuration, matching approval-token guard. Actual: HMAC signing and onboarding verification accept it. This can undermine recovery authentication if a deployment uses that configuration; deployment settings were not inspected. | `app/config.py:12`, `app/services/onboarding.py:23`, `app/services/approval_tokens.py:92`; named test; [isolated comparison](artifacts/backend-013659497589-security-offline-onboarding-weak-signing-guard-comparison-and-audit-hash-coverage-inspection.txt). | Apply the existing strong-secret guard to onboarding signing and verification; fail closed before recovery routes are served. |
+| BE-003 | High | Backend | Webhooks allow private destinations and retain their response text | In `test_webhook_registration_rejects_private_network_targets`, authenticate synthetic owner and register each of `http://127.0.0.1/hook`, `http://10.0.0.1/hook`, `http://[::1]/hook`. No URL is contacted. Offline execution of the delivery source with a fake HTTP client confirms destination is passed through and fake internal response is retained. | Expected: reject unsafe destinations or enforce a secure default egress policy. Actual: all registrations return 200; delivery sends directly to endpoint URL and records up to 512 response characters for tenant readback. Real network reachability and deployment egress controls are unverified. | `app/routers/webhooks.py:70`, `app/services/webhooks.py:155`, `app/services/webhooks.py:157`, `app/routers/webhooks.py:56`; named test; [mocked sink evidence](artifacts/backend-013737831714-security-offline-webhook-delivery-sink-and-response-disclosure-confirmation.txt). | Parse and validate destinations; require HTTPS by default; reject private/local/reserved resolved addresses and protect against DNS rebinding. Allow local development destinations only through explicit isolated configuration; enforce egress restrictions. |
+| BE-004 | Medium | Backend | Non-ASCII token signature causes unauthenticated HTTP 500 | In `test_unicode_token_signature_is_a_client_error`, POST JSON token `invalid.\u2603` to each of `/v1/approvals/act_qa_owner/token-decision`, `/v1/tenants/recover/exchange`, `/v1/tenants/verify-email`. | Expected: 400/401 malformed-token response. Actual: all three return 500 because string `hmac.compare_digest` rejects non-ASCII and its TypeError escapes. ASCII malformed classes correctly fail closed. | `app/services/approval_tokens.py:53`, `app/services/onboarding.py:63`, `app/routers/approvals.py:226`; named test; [unmasked failures](artifacts/backend-013811784440-confirm-known-backend-defects-without-expected-failure-masking.txt). | Validate token encoding/shape before constant-time comparison and normalize decoding/type errors to the existing invalid-token exceptions. |
+| BE-005 | Low | Backend | Test-workspace recovery returns a live-prefixed key | In `test_recovered_key_keeps_test_workspace_mode`, recover the seeded tenant whose `mode` is `test`, then inspect only the returned key's prefix classification. | Expected: recovered key retains test prefix. Actual: `generate_api_key()` defaults to live prefix. Tenant mode remains test, so this finding does not claim that notifications become live. | `app/routers/tenants.py:164`, `app/auth.py:15`; named test; [unmasked failures with value redacted](artifacts/backend-013811784440-confirm-known-backend-defects-without-expected-failure-masking.txt). | Pass `tenant.mode` when generating a recovery key and retain a test-workspace regression. |
+| BE-006 | Low | Backend | Default SMS approvers bypass creation-time consent check | In `test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver`, create with explicit unconsented synthetic SMS destination (400); save that destination through `PATCH /v1/tenants/me`; create again with approvers omitted. | Expected: same consent requirement after default resolution. Actual: fallback creation returns 200 and leaves a pending approval whose only SMS recipient will be skipped. The dispatcher still checks consent; unauthorized SMS sending is not demonstrated. | `app/routers/approvals.py:72`, `app/services/approval_service.py:34`, `app/services/notifications.py:111`; named test; [unmasked failures](artifacts/backend-013811784440-confirm-known-backend-defects-without-expected-failure-masking.txt). | Resolve caller/tenant/global recipients first, then apply the same consent validation to the resolved list before persisting. |
+| BE-007 | High | Backend | Missing Twilio authentication configuration accepts unsigned consent mutations | In `test_unsigned_twilio_callback_cannot_change_multiple_tenants[False]`, seed two tenants with the same synthetic SMS contact, set Twilio auth token empty in memory, and POST unsigned `From=+15551230000&Body=STOP` to `/webhooks/twilio/inbound`; compare contacts. Configured-secret control is included. | Expected: 401 or disabled-service 503 and unchanged contacts. Actual: 200 and both contacts revoked. With configured authentication, unsigned callback is rejected. Deployment configuration is not verified. | `app/routers/twilio_webhooks.py:21`, `app/routers/twilio_webhooks.py:78`; named test; [offline conditional guard evidence](artifacts/backend-013647886646-security-offline-function-level-confirmation-of-webhook-destination-validation-and-missing-twilio-configuration.txt). | Return 503 if webhook authentication is unconfigured; validate signatures on every enabled callback before any mutation. |
+| BE-008 | Medium | Backend | Audit CSV preserves formula cells in untrusted error text | In `test_audit_csv_neutralizes_spreadsheet_formula_cells`, emit an audit event for an owned synthetic approval with error `=1+1`, GET `/v1/audit-events.csv`, parse it with `csv.DictReader`, and inspect error cell. No spreadsheet program executes the cell. | Expected: exported untrusted text is safe to open as spreadsheet data. Actual: cell remains `=1+1`, which spreadsheet clients can interpret as a formula. Only harmless arithmetic was tested; no external-content formula was constructed. | `app/routers/audit.py:181`; named test; [offline CSV evidence](artifacts/backend-013801348874-security-offline-csv-formula-neutralization-check.txt). | Neutralize spreadsheet formula prefixes in untrusted exported text, preserving data meaning; test `=`, `+`, `-`, `@`, tab and carriage-return boundary classes. |
+| BE-009 | Low | Backend | Application does not pass a basic static type check | Run .venv/bin/mypy app --ignore-missing-imports --no-error-summary from the repository root using the recorded QA environment. | Expected a clean type-check result for the documented typed Python API. Actual five diagnostics: logging processor collection type at two calls and untyped SQLAlchemy Result rowcount at three delete results. This is a static-analysis gap, not a demonstrated runtime failure. | app/logging_setup.py:53, app/logging_setup.py:64, app/routers/admin.py:99, app/routers/admin.py:101, app/routers/admin.py:103; [mypy output](artifacts/lead-013748400456-static-mypy-application.txt). | Annotate the structlog processor collection with its public processor type and narrow/cast executed DML results to the appropriate result interface; rerun checks without suppressing errors. |
+| FE-001 | Medium | Frontend / API contract | OpenAPI omits the approval response contract | `.venv/bin/python docs/qa/2026-10-02/pytest_safe.py tests/test_qa_contract.py::test_openapi_types_primary_approval_responses --no-cov --runxfail -q` | Expected typed success bodies including `action_id`/`status` and the list-or-page envelope. Actual POST/list/get/wait advertise `{}`, allowing any JSON value and providing no field protection to the schema breaking-change gate. Runtime approval aliases do exist and passed a separate smoke test. | `app/routers/approvals.py:59`, `:98`, `:130`; `tests/test_qa_contract.py::test_openapi_types_primary_approval_responses`; [contract audit](artifacts/frontend-contract-audit.json); [unmasked reproductions](artifacts/frontend-013957506871-confirm-every-documented-contract-gap-independently.txt). Audit quantifies 28 unconstrained success schemas across 29 operations. | Define and attach accurate response models, retaining **both** legacy `id`/`decision` and consumer `action_id`/`status` fields. Type the array-or-page union for list endpoints. Regenerate the baseline in a coordinated product-fix PR; the existing unused `ApprovalResponse` lacks aliases and must not be attached unchanged. |
+| FE-002 | Medium | Frontend / API contract | Runtime bounds and enum choices are absent from the request schema | `.venv/bin/python docs/qa/2026-10-02/pytest_safe.py tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints --no-cov --runxfail -q`; inspect `ApprovalCreate` and `TenantSignup` in the audit artifact | Expected timeout minimum 1/maximum 86400, risk enum low/medium/high/critical, and workspace mode live/test in machine-readable schemas. Actual properties are only integer/string; clients can validate invalid inputs against OpenAPI and still receive 422. New invalid risk cases returned the expected runtime 422. | `app/schemas.py:24`, `:42`, `:44`, `:57`, `:64`; `tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints`; [contract audit](artifacts/frontend-contract-audit.json). Existing timeout behavior is independently pinned by `tests/test_middleware_contract.py::test_timeout_seconds_bounds_are_1_to_86400`. | Publish equivalent constraints using Pydantic `Field(ge=1, le=86400)` and `Literal`/enum types, or explicit JSON-schema metadata if preserving exact validation messages. Preserve current accepted values and coordinated baseline updates. |
+| FE-003 | Medium | Frontend / API contract | CSV download is documented as JSON | `.venv/bin/python docs/qa/2026-10-02/pytest_safe.py tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime --no-cov --runxfail -q` | Expected the successful response to declare `text/csv`; actual runtime returns `text/csv; charset=utf-8` with CSV text while OpenAPI declares only `application/json`. A client generated from this contract can choose a JSON decoder for a CSV body. | `app/routers/audit.py:136`, `:190`; `tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime`; [unmasked reproductions](artifacts/frontend-013957506871-confirm-every-documented-contract-gap-independently.txt). | Declare the CSV response class/media type and a string/binary response schema in route metadata. Keep the current runtime CSV contract and attachment filename intact. |
+| UX-001 | Medium | UX / DX | Contributor setup omits required development tools | In a fresh environment use the CONTRIBUTING setup sequence through `uv sync`; inspect/import `pytest`, `ruff`, and `pre_commit` before the documented pre-commit/test commands. QA reproduced this with an isolated copy of the package metadata in `/private/tmp`. | Expected documented setup makes checks available. Actual all three modules are absent; `dev` is an optional extra, not selected by plain `uv sync`, and pre-commit is not declared. | `CONTRIBUTING.md:9`, `CONTRIBUTING.md:10`, `pyproject.toml:27`; [fresh install evidence](artifacts/ux-013738884721-reproduce-contributor-install-in-isolated-public-package-environment.txt) | Align CONTRIBUTING with the README's dev-extra installation, and explicitly install/provision pre-commit. |
+| UX-002 | Low | UX / DX | Documented single-file test command targets a missing file | Resolve the `pytest tests/test_approvals.py -v` example from repository root, or run `tests/test_qa_dx.py::test_contributing_single_file_test_example_exists`. | Expected an existing example test file. Actual `tests/test_approvals.py` does not exist. | `CONTRIBUTING.md:29`; `tests/test_qa_dx.py`; [targeted test result](artifacts/ux-014109368870-apply-qa-only-import-lint-repair-and-verify-dx-test-marker-scope.txt) | Replace the example with a maintained test path such as `tests/test_middleware_contract.py`. |
+| UX-003 | Medium | UX / DX | Contributor hotfix instructions bypass documented release gates | Compare CONTRIBUTING release instructions with README Deployment and the mandatory decision-writer drain section of the release checklist. Do not execute any release command. | Expected one consistent reviewed release procedure that links mandatory checks. Actual CONTRIBUTING says to push a hotfix directly to main and watch automatic deployment, while README requires the checklist and it prohibits mixed old/new writers. | `CONTRIBUTING.md:63`, `README.md:235`, `docs/production-checklist.md:29`; [numbered source evidence](artifacts/ux-013935639836-read-release-safety-reference-and-exact-documentation-lines.txt) | Replace direct-main hotfix guidance with the review/release workflow and link the mandatory checklist. |
+| UX-004 | Medium | UX / DX | Generated API docs fail automated accessibility checks | Run the local docs harness with the supplied browser endpoint and installed Playwright/axe/Swagger packages; load `/docs` at 1440×1000; run axe WCAG A/AA and WCAG 2.2 AA rules. | Expected language metadata, accessible operation controls, at least 4.5:1 normal-text contrast, and adequately sized/spaced targets. Actual 46 contrast, 1 language, 29 nested-interactive, and 29 target-size results in the Swagger 5.33.1 snapshot. Version badge contrast is 3.75:1; operation links are 19px high and nested inside buttons. | `app/main.py:45`; [browser summary](artifacts/ux-browser-summary.json), [full axe report](artifacts/ux-browser-report.json), [desktop](artifacts/ux-chromium-desktop.png), [keyboard-expanded operation](artifacts/ux-chromium-approval-expanded.png), [mobile](artifacts/ux-chromium-mobile-viewport.png) | Customize the generated docs shell to declare language/landmarks and pin/test an accessible Swagger integration; remediate contrast, nested links/buttons, and target sizing, then rerun axe and native screen-reader checks. |
+
+## Secret exposure review and exclusions
+
+A secret-exposure candidate was recorded at tests/test_coverage_onboarding.py:66 with value [REDACTED]. It is an existing synthetic welcome-email fixture, identified by its mocked sender and existing .gitleaks.toml test-fixture allowance. Concatenating tracked files to stdin removes path metadata, so the initial scan reported that placeholder. It is not counted as an exposed real credential. No ignore list or baseline was changed.
+
+The subsequent history scan encountered missing objects in a partial clone and attempted Git lazy retrieval, then failed on the read-only object store. It reported zero commits and an exit code of zero despite fatal errors. That result is **unverified**, not a clean history scan. The QA command wrapper now disables lazy fetches for subsequent Git operations. The orchestrator must perform its own complete diff/history secret review.
+
+Documented pending-forever approval timeout semantics are not a defect. Consent-dispatch protection remains in place for BE-006. A test workspace remains in test mode for BE-005. No native spreadsheet execution or private-target HTTP request was used to prove findings.
+
+See [BACKEND-LOG.md](BACKEND-LOG.md), [FRONTEND-LOG.md](FRONTEND-LOG.md), [UX-LOG.md](UX-LOG.md), and [GATE-LOG.md](GATE-LOG.md) for pass ownership, charter results, negative controls and review limits.
+# Coverage report — 2026-10-02
+
+PR: opened by orchestrator
+CI status: pending at time of writing
+
+## Comparable full-suite measurements
+
+Both measurements used CPython 3.13.14, identical resolved dependencies, pytest-cov line coverage of app, and the same safe bootstrap. No product source changed. The baseline explicitly excluded the three new QA files; the after run included them. The 70% configured gate passed in both.
+
+| Measurement | Passed | Skipped | Expected failures | Covered / statements | Line coverage |
+|---|---:|---:|---:|---:|---:|
+| Before | 208 | 26 | 0 | 1597 / 1911 | 83.57% |
+| After | 264 | 26 | 21 | 1603 / 1911 | 83.88% |
+
+Increase: **0.31 percentage points**, six additional statements. New tests add meaningful assertions to code already exercised, so coverage percentage understates the behavioral additions. Lines executed inside strict xfails count as covered; coverage does not mean those defects are fixed.
+
+The full suite also ran on **CPython 3.11.15**, matching the CI major/minor: **264 passed, 26 skipped, 21 xfailed**, without coverage to preserve the comparable 3.13 dataset. Python/dependency/platform differences remain from Ubuntu-hosted CI.
+
+## Added test cases
+
+| File | Passing | Strict xfail | Focus |
+|---|---:|---:|---|
+| tests/test_qa_backend.py | 31 | 12 | Real authentication/tenant matrix, same-key tenant isolation, recovery and callback security, malformed tokens, safe CSV |
+| tests/test_qa_contract.py | 22 | 8 | Baseline routes, response shapes, request boundaries, JSON/cursor errors, CSV encoding/content types |
+| tests/test_qa_dx.py | 3 | 1 | README test-mode payloads and nonexistent contributor test command |
+| Total | 56 | 21 | 77 added cases; xfails map to 12 findings |
+
+## Per-module line coverage
+
+| Module | Before | After | Statements still missing |
+|---|---:|---:|---|
+| app/__init__.py | 100.00% | 100.00% | None |
+| app/auth.py | 68.97% | 68.97% | 39, 40, 41, 42, 43, 44, 46, 47, 48 |
+| app/config.py | 96.88% | 96.88% | 56 |
+| app/db.py | 92.00% | 92.00% | 40, 41 |
+| app/logging_setup.py | 94.23% | 94.23% | 113, 114, 130 |
+| app/main.py | 90.62% | 90.62% | 26, 27, 77 |
+| app/models.py | 100.00% | 100.00% | None |
+| app/routers/__init__.py | 100.00% | 100.00% | None |
+| app/routers/admin.py | 56.25% | 56.25% | 41, 46, 47, 48, 80, 82, 84, 85, 93, 94, 95, 96, 98, 99, 100, 101, 102, 103, 104, 105, 107 |
+| app/routers/approvals.py | 79.73% | 79.73% | 35, 75, 81, 118, 119, 120, 123, 141, 142, 143, 144, 146, 147, 149, 150, 151, 152, 153, 154, 155, 156, 162, 163, 173, 174, 175, 196, 200, 243, 273 |
+| app/routers/approver_contacts.py | 82.61% | 82.61% | 34, 52, 53, 54 |
+| app/routers/audit.py | 68.75% | 68.75% | 49, 55, 56, 57, 58, 59, 82, 85, 108, 110, 111, 112, 114, 116, 121, 122, 123, 124, 125, 126, 128, 151, 154, 156, 190 |
+| app/routers/billing.py | 78.69% | 78.69% | 41, 42, 47, 48, 49, 50, 51, 52, 53, 118, 119, 137, 138, 139, 147, 148, 158, 159, 165, 168, 173, 174, 175, 176, 207, 208 |
+| app/routers/status_history.py | 72.73% | 72.73% | 43, 61, 62, 63, 64, 65, 66, 67, 69 |
+| app/routers/tenants.py | 71.72% | 71.72% | 61, 62, 63, 64, 65, 66, 67, 70, 71, 72, 76, 77, 79, 95, 99, 130, 131, 132, 133, 153, 160, 161, 164, 165, 170, 171, 209, 210 |
+| app/routers/twilio_webhooks.py | 83.33% | 83.33% | 25, 40, 48, 49, 56, 67, 79, 80, 87 |
+| app/routers/webhooks.py | 80.65% | 82.26% | 90, 91, 116, 117, 118, 119, 120, 121, 139, 146, 151 |
+| app/schemas.py | 97.09% | 98.06% | 30, 122 |
+| app/services/__init__.py | 100.00% | 100.00% | None |
+| app/services/approval_service.py | 56.00% | 68.00% | 17, 18, 19, 20, 50, 52, 61, 62 |
+| app/services/approval_tokens.py | 90.38% | 92.31% | 30, 60, 61, 67 |
+| app/services/audit_log.py | 95.83% | 95.83% | 26 |
+| app/services/contacts.py | 100.00% | 100.00% | None |
+| app/services/decision_bus.py | 86.96% | 86.96% | 46, 49, 50, 51, 58, 59, 60, 61, 62 |
+| app/services/idempotency.py | 95.24% | 95.24% | 154, 155, 156, 159 |
+| app/services/nonce_store.py | 100.00% | 100.00% | None |
+| app/services/notification_attempts.py | 72.34% | 72.34% | 84, 85, 86, 87, 92, 93, 94, 95, 96, 97, 98, 99, 100 |
+| app/services/notifications.py | 85.19% | 85.19% | 27, 32, 33, 43, 46, 47, 49, 75, 76, 91, 113, 114, 163, 164, 180, 186 |
+| app/services/onboarding.py | 91.67% | 91.67% | 67, 68, 75, 112, 113, 115 |
+| app/services/pagination.py | 80.49% | 80.49% | 78, 80, 81, 82, 83, 84, 85, 86 |
+| app/services/rate_limit.py | 68.09% | 68.09% | 27, 28, 29, 39, 42, 73, 83, 84, 85, 86, 87, 92, 99, 100, 115 |
+| app/services/tsa.py | 90.00% | 90.00% | 81, 94, 113, 114, 124, 125, 127, 149 |
+| app/services/webhooks.py | 63.33% | 63.33% | 134, 136, 137, 138, 139, 140, 148, 149, 150, 152, 153, 154, 155, 156, 157, 158, 159, 160, 162, 163, 164, 165, 166, 167, 170, 171, 186, 187, 188, 189, 190, 191, 192 |
+
+## Gaps and interpretation
+
+- All 26 existing opt-in PostgreSQL cases skipped because no disposable PostgreSQL URL was provided and existing databases were prohibited. They include real connection races, row locking, cancellation, nonce uniqueness and transactional behavior.
+- No real Redis, LISTEN/NOTIFY, read-replica lag, provider delivery, billing, TSA, Sentry, or deployment egress checks. Existing TestClient lifespan attempts were blocked by pytest-socket; their graceful-degradation warnings are retained in the test logs.
+- Webhook delivery retry and failure paths, rate-limit outage behavior, streaming/long-poll load, and administrator purge branches remain incompletely covered. No stress, load or production-scale performance claim.
+- No property-based engine run was added: selected deterministic malformed-input equivalence classes and boundary tests complement existing race/rollback tests. Hypothesis was installed as optional QA tooling but unused; project dependencies are unchanged.
+- Local documentation smoke covered Chromium, Firefox and WebKit. Axe on Chromium covered selected WCAG 2.2 A/AA rules and DOM keyboard/semantic checks, not native screen-reader speech or complete WCAG conformance.
+- No product frontend exists in this checkout; UI/component/build/Lighthouse for the separately hosted dashboard are out of scope. Navigation timings on the local docs harness are only a smoke metric.
+
+## Raw evidence
+
+- [Before coverage JSON](artifacts/coverage-before.json) and [before JUnit](artifacts/junit-before.xml).
+- [After coverage JSON](artifacts/coverage-after.json) and [after JUnit](artifacts/junit-after.xml).
+- [CI-version JUnit](artifacts/junit-python311.xml).
+- Full commands and outcomes: [SESSION-LOG.md](SESSION-LOG.md), [BACKEND-LOG.md](BACKEND-LOG.md), [FRONTEND-LOG.md](FRONTEND-LOG.md), [UX-LOG.md](UX-LOG.md).
+# QA sweep summary — 2026-10-02
+
+PR: opened by orchestrator
+CI status: pending at time of writing
+
+The required wording above records workflow ownership. No PR has been created by this agent and no URL is available yet. Changes are uncommitted on qa/2026-10-02-sweep for the orchestrator to review, scan, commit, push and open as one draft PR.
+
+Counts: Critical=0 High=4 Medium=8 Low=4
+
+| Group | Critical | High | Medium | Low | Total |
+|---|---:|---:|---:|---:|---:|
+| Backend | 0 | 4 | 2 | 3 | 9 |
+| Frontend substitute: API consumer contract | 0 | 0 | 3 | 0 | 3 |
+| UX substitute: developer experience / generated docs | 0 | 0 | 3 | 1 | 4 |
+| Total | 0 | 4 | 8 | 4 | 16 |
+
+## Top five risks and next-fix order
+
+1. **BE-002 — Weak default signing can undermine recovery authentication.** Onboarding accepts the known default signing configuration; fail closed as the decision-token code already does. Deployment configuration was not inspected.
+2. **BE-001 — A recovery link can rotate keys repeatedly.** A second redemption succeeds and revokes the first recovered key; consume recovery nonces atomically and test concurrent redemption.
+3. **BE-007 — Missing Twilio authentication allows unsigned contact changes.** The unconfigured route accepts a callback that revokes matching contacts across tenants; return disabled-service 503 until signature authentication is configured.
+4. **BE-003 — Customer webhooks accept private-network destinations.** Registration accepts loopback/private addresses and delivery passes them directly to HTTP with response-text readback; enforce destination validation and egress restrictions. Real network reachability was not tested.
+5. **FE-001 — The schema check cannot protect undocumented response fields.** 28 successful response schemas are unconstrained, including approval contracts; publish accurate models and update the baseline in a coordinated fix.
+
+Then address BE-004 malformed-token 500s, BE-008 spreadsheet-formula handling, FE-002/003 schema constraints/media types, UX-001/003 developer/release instructions, UX-004 documentation accessibility, and the low-severity mode/consent/type-check/test-path issues. Full exact reproductions and suggested fixes are in [FINDINGS.md](FINDINGS.md). No product fixes were applied in this QA sweep.
+
+## What changed
+
+Three new test files add **77 cases: 56 passing and 21 strict expected failures**, mapped to finding IDs. The only other changes are documentation, reports, screenshots and QA-only harnesses under docs/qa/2026-10-02/. Product source, runtime dependency declarations, existing tests, migrations, CI, deployment files and environment files are unchanged.
+
+Each group has its own pass log and UTC command ledger. [PLAN.md](PLAN.md) explains the risk scoring, test pyramid, timed charters and substitutions. [SESSION-LOG.md](SESSION-LOG.md) includes command failures and false starts. [GATE-LOG.md](GATE-LOG.md) contains an independent review, including unmasked bug reproductions and narrowed xfail checks.
+
+## Verification evidence
+
+| Check | Result |
+|---|---|
+| Existing suite, Python 3.13.14 | 208 passed, 26 skipped; line coverage 83.57% |
+| Complete suite after QA additions, Python 3.13.14 | 264 passed, 26 skipped, 21 xfailed; line coverage 83.88% |
+| CI-version local compatibility, Python 3.11.15 | 264 passed, 26 skipped, 21 xfailed |
+| Whole-repository Ruff | Passed after QA-only harness lint correction |
+| Mypy | 5 existing diagnostics; BE-009 |
+| Bandit | 0 issues, 0 scanner errors |
+| pip-audit public package metadata | 0 known vulnerabilities in 89 auditable resolved distributions; local sentinel-api package skipped |
+| Runtime OpenAPI vs committed baseline | Identical: 24 paths, 29 operations; contract omissions recorded separately |
+| Browser docs smoke | Chromium 153.0.8010.12, Firefox 155.0, WebKit 26.6: HTTP 200, 29 operations, no uncaught JavaScript errors |
+| Keyboard / responsive / states | Enter expansion and visible focus passed; 375px mobile width without page overflow; synthetic empty/error/loading screenshots saved |
+| Axe | Four confirmed WCAG-related rule families; UX-004. One rule incomplete; no full WCAG conformance claim |
+| Secret review | Current source/artifact scans and synthetic fixture triage recorded; full history scan blocked by missing partial-clone objects |
+| Remote CI | Pending; no GitHub queries or PR operations performed |
+
+Coverage increased by 0.31 percentage points, from 1597/1911 to 1603/1911 executable statements. Existing high coverage did not establish recovery-token or response-contract correctness. Expected-failure execution contributes to coverage; no defect is fixed merely because its lines are covered. Details: [COVERAGE.md](COVERAGE.md).
+
+Screenshots: [desktop](artifacts/ux-chromium-desktop.png), [mobile viewport](artifacts/ux-chromium-mobile-viewport.png), [expanded operation](artifacts/ux-chromium-approval-expanded.png), [empty](artifacts/ux-chromium-empty-schema.png), [error](artifacts/ux-chromium-schema-error.png), [loading](artifacts/ux-chromium-loading.png). Compact [browser evidence](artifacts/ux-browser-summary.json) and [full axe output](artifacts/ux-browser-report.json) include versions and selectors.
+
+## What remains untested and why
+
+- **26 PostgreSQL-only tests:** no disposable PostgreSQL target was provided; using existing databases was prohibited. SQLite does not prove PostgreSQL locking, race, replica or notification behavior.
+- **Real providers and production:** Twilio, Resend, Stripe, TSA, Sentry, production egress, billing and deployment configuration were outside scope. Provider behavior was stubbed; configuration-dependent findings do not assert deployed exposure.
+- **Separate product frontend/SDK:** absent from this repository. No dashboard build/component/E2E/Lighthouse claim; consumer-contract and generated-documentation passes substituted.
+- **Native screen readers and performance at scale:** keyboard/DOM/axe and local navigation timing were feasible; VoiceOver/NVDA, exhaustive WCAG conformance, load/stress and real-user performance were not tested.
+- **Complete secret history:** scanner scanned zero commits after a partial-clone lazy-fetch/object-store failure; exit zero was not accepted as evidence. No secret-scan ignore list or baseline was edited. Orchestrator review remains required.
+- **Hosted CI and draft PR:** explicitly delegated to the orchestrator. Local results do not establish remote check status.
+
+No commits, pushes, merges, deploys or product behavior changes were made. No environment/credential files were read and no production systems were exercised. An attempted read-only Git history scan triggered automatic missing-object retrieval and failed; that dead end is explicitly recorded rather than treated as a completed scan.
+# UTC session log — 2026-10-02 QA sweep
+
+PR: opened by orchestrator
+CI status: pending at time of writing
+
+The requested folder date is the Los Angeles date; execution occurred on October 3 UTC. Each entry below records a shell command or compound command, start/end UTC, exit status, and a sanitized output artifact. Source edits made with apply_patch are recorded in the pass narratives rather than represented as shell commands. The JSONL ledgers are authoritative and may include the completion record of this rendering command after this page is written.
+
+## Bootstrap before the command recorder
+
+Recorded retrospectively at 2026-10-03T01:35:05.414067+00:00. Exact individual execution timestamps were not captured; these are not invented execution times.
+
+- **Bootstrap repository identity:** `pwd && git worktree list && git remote get-url origin && git branch --show-current && git status --short && rg --files -g AGENTS.md ... | head -80` — PASS: expected repository, sole worktree, clean branch qa/2026-10-02-sweep; no AGENTS.md found.
+- **Memory quick pass:** `rg -n -i 'sentinel|qa sweep' /Users/sellers/.codex/memories/MEMORY.md` — No hits (exit 1); no relevant memory used.
+- **Review skill loading:** `cat /Users/sellers/.codex/skills/review-pr/SKILL.md; cat /Users/sellers/.agents/skills/code-review/SKILL.md; cat /Users/sellers/.codex/skills/security-best-practices/SKILL.md` — Read review/security guidance. Remote CodeRabbit not run: prohibited third-party API scope..
+- **Repository map:** `rg --files with exclusions for dependency directories, environment/credential/secret files and lockfiles | head -180` — FastAPI service, tests, OpenAPI baseline, no frontend sources.
+- **Bootstrap logging:** `mkdir -p docs/qa/2026-10-02/artifacts; python3 bootstrap logging runner` — Created audit runner and retrospective bootstrap records.
+
+UX also ran a standalone pwd before 01:35:42Z; it returned the expected checkout. A backend subagent's first wrapper invocation used an unsupported backend-security group and was rejected before its inner command ran; its next successful entry records this. A lead nested-heredoc quoting failure is recorded below with an approximate timestamp.
+
+## Test sessions, charters and non-shell actions
+
+- Backend BE-C1/BE-C2: see [BACKEND-LOG.md](BACKEND-LOG.md) for UTC charter bounds, auth/permissions matrix, OWASP review and bug reproductions.
+- Frontend FE-C1/FE-C2: see [FRONTEND-LOG.md](FRONTEND-LOG.md) for contract exploration, baseline comparison, boundary inputs and independent negative controls.
+- UX-C1/C2/C3: see [UX-LOG.md](UX-LOG.md) for setup reproduction, browser engines, axe, keyboard/semantics, viewports, synthetic states and Nielsen review.
+- Independent gate: [GATE-LOG.md](GATE-LOG.md). Tests were refined to narrow xfails and expose each contract gap independently; product code was not changed.
+- Around 01:37 UTC, apply_patch wrote PLAN.md and the safe pytest bootstrap after a shell quoting failure. Subsequent apply_patch edits added command-recorder lazy-fetch protection and this renderer. New test and UX harness edits are described in group logs.
+- Around 01:40 UTC, the lead used view_image to independently inspect desktop and mobile documentation screenshots. UX captures and state screenshots are referenced in UX-LOG.md.
+
+## Interpretation of failed commands
+
+Expected-failure negative controls intentionally exit 1. No-match rg exits and missing optional tools/paths are discovery outcomes, not product failures. The first npm cache attempt and UTF-8 docs adapter attempts failed; successful retries are preserved separately. Mypy reports five existing diagnostics. A stdin secret scan lost path allowlist context and flagged an existing synthetic fixture. A history secret scan exited zero despite fatal partial-clone/object-store errors and zero scanned commits; it is unverified. The complete outcomes, including these dead ends, follow.
+
+## Command ledger (104 completed records at rendering)
+
+### 001 — 2026-10-03T01:35:05.450945+00:00 — lead: Inspect project metadata and test layout
+
+End: 2026-10-03T01:35:05.473334+00:00; duration: 0.021 seconds; exit: **0**.
+
+```sh
+cat pyproject.toml; rg -n '^(def |async def |class |@|##|# )' app/main.py app/config.py app/db.py app/auth.py README.md ARCHITECTURE.md tests/test_routes.py; rg --files -g 'conftest.py' -g '*lock*' -g '.github/workflows/*' -g 'AGENTS.md' -g '!**/.env*' -g '!**/*credential*'; command -v uv; command -v ruff; command -v gitleaks
+```
+
+Outcome/output: [artifacts/lead-013505450945-inspect-project-metadata-and-test-layout.txt](artifacts/lead-013505450945-inspect-project-metadata-and-test-layout.txt).
+
+### 002 — 2026-10-03T01:35:23.931810+00:00 — backend: Verify repository and inspect backend configuration
+
+End: 2026-10-03T01:35:23.980174+00:00; duration: 0.048 seconds; exit: **0**.
+
+```sh
+pwd && git branch --show-current && git remote get-url origin && git worktree list && rg --files -g "AGENTS.md" -g "pyproject.toml" -g "app/**" -g "tests/**" | head -160
+```
+
+Outcome/output: [artifacts/backend-013523931810-verify-repository-and-inspect-backend-configuration.txt](artifacts/backend-013523931810-verify-repository-and-inspect-backend-configuration.txt).
+
+### 003 — 2026-10-03T01:35:35.003564+00:00 — frontend: Verify checkout identity and branch
+
+End: 2026-10-03T01:35:35.055376+00:00; duration: 0.051 seconds; exit: **0**.
+
+```sh
+pwd && git worktree list && git remote get-url origin && git branch --show-current && git status --short
+```
+
+Outcome/output: [artifacts/frontend-013535003564-verify-checkout-identity-and-branch.txt](artifacts/frontend-013535003564-verify-checkout-identity-and-branch.txt).
+
+### 004 — 2026-10-03T01:35:35.469879+00:00 — backend: Read backend models, configuration and approval routes
+
+End: 2026-10-03T01:35:35.481474+00:00; duration: 0.011 seconds; exit: **0**.
+
+```sh
+cat pyproject.toml && sed -n "1,250p" app/routers/approvals.py && sed -n "1,250p" app/auth.py && sed -n "1,240p" tests/test_routes.py
+```
+
+Outcome/output: [artifacts/backend-013535469879-read-backend-models-configuration-and-approval-routes.txt](artifacts/backend-013535469879-read-backend-models-configuration-and-approval-routes.txt).
+
+### 005 — 2026-10-03T01:35:38.825125+00:00 — frontend: Read scoped instructions and integration code map
+
+End: 2026-10-03T01:35:38.839451+00:00; duration: 0.014 seconds; exit: **1**.
+
+```sh
+rg --files -g AGENTS.md -g "!**/.env*" -g "!**/credentials*" -g "!**/*lock*" app tests docs pyproject.toml README.md && sed -n "1,200p" app/schemas.py && sed -n "1,240p" tests/conftest.py && cat pyproject.toml
+```
+
+Outcome/output: [artifacts/frontend-013538825125-read-scoped-instructions-and-integration-code-map.txt](artifacts/frontend-013538825125-read-scoped-instructions-and-integration-code-map.txt).
+
+### 006 — 2026-10-03T01:35:39.692676+00:00 — backend: Inspect decision service and replay coverage for risk charter
+
+End: 2026-10-03T01:35:39.707929+00:00; duration: 0.015 seconds; exit: **0**.
+
+```sh
+sed -n "230,420p" app/routers/approvals.py && cat app/schemas.py && sed -n "1,280p" app/services/approval_service.py && sed -n "1,240p" app/services/idempotency.py && sed -n "1,220p" tests/test_decision_atomicity.py
+```
+
+Outcome/output: [artifacts/backend-013539692676-inspect-decision-service-and-replay-coverage-for-risk-charter.txt](artifacts/backend-013539692676-inspect-decision-service-and-replay-coverage-for-risk-charter.txt).
+
+### 007 — 2026-10-03T01:35:40.841452+00:00 — backend: Security: verify checkout identity; prior wrapper attempt rejected unsupported backend-security group without executing inner command
+
+End: 2026-10-03T01:35:40.892528+00:00; duration: 0.05 seconds; exit: **0**.
+
+```sh
+pwd && git branch --show-current && git remote get-url origin && git worktree list && rg --files -g AGENTS.md -g "*auth*" -g "*audit*" -g "*webhook*" -g "*tenant*" -g "*admin*" -g "!*.env*"
+```
+
+Outcome/output: [artifacts/backend-013540841452-security-verify-checkout-identity-prior-wrapper-attempt-rejected-unsupported-backend-security-group-without-executing-inner-command.txt](artifacts/backend-013540841452-security-verify-checkout-identity-prior-wrapper-attempt-rejected-unsupported-backend-security-group-without-executing-inner-command.txt).
+
+### 008 — 2026-10-03T01:35:41.314345+00:00 — lead: Tool availability and safe tracked secret detection
+
+End: 2026-10-03T01:35:41.414674+00:00; duration: 0.099 seconds; exit: **0**.
+
+```sh
+python3 - <<'PY'
+from pathlib import Path
+import re,subprocess
+for exe in ('python3','node','npm','uv','ruff','mypy','bandit','pip-audit','gitleaks','docker'):
+ p=subprocess.run(['which',exe],capture_output=True,text=True);print(exe,p.stdout.strip() or 'unavailable')
+patterns=[r'(?:sk_live_|rk_live_|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{16,}',r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',r'AKIA[0-9A-Z]{16}']
+count=0
+for name in subprocess.check_output(['git','ls-files'],text=True).splitlines():
+ p=Path(name)
+ if any(x in name.lower() for x in ('.env','credential','secret','lock')) or not p.is_file():continue
+ try: data=p.read_text()
+ except (UnicodeError,OSError):continue
+ for i,line in enumerate(data.splitlines(),1):
+  if any(re.search(pat,line) for pat in patterns):
+   print('potential secret exposure',name+':'+str(i),'[REDACTED]');count+=1
+print('high-confidence pattern matches',count)
+PY
+```
+
+Outcome/output: [artifacts/lead-013541314345-tool-availability-and-safe-tracked-secret-detection.txt](artifacts/lead-013541314345-tool-availability-and-safe-tracked-secret-detection.txt).
+
+### 009 — 2026-10-03T01:35:41.314774+00:00 — lead: Read safety boundaries and test setup
+
+End: 2026-10-03T01:35:41.343970+00:00; duration: 0.028 seconds; exit: **0**.
+
+```sh
+cat app/config.py app/db.py app/main.py; rg -n 'environ|monkeypatch|DATABASE|REDIS|httpx|requests|localhost|127.0.0.1|create_engine|create_async_engine|pytestmark|skipif' tests; rg --files --hidden .github | sort; rg --files /Users/sellers/.codex/skills/security-best-practices/references | rg 'python.*fastapi'
+```
+
+Outcome/output: [artifacts/lead-013541314774-read-safety-boundaries-and-test-setup.txt](artifacts/lead-013541314774-read-safety-boundaries-and-test-setup.txt).
+
+### 010 — 2026-10-03T01:35:42.215658+00:00 — ux: Verify checkout and inspect UX surfaces
+
+End: 2026-10-03T01:35:42.269420+00:00; duration: 0.053 seconds; exit: **0**.
+
+```sh
+git worktree list; git remote get-url origin; git branch --show-current; rg --files -g "!*lock*" -g "!*.env*" -g "!node_modules/**" -g "!docs/qa/**" | head -100; cat README.md; cat docs/qa/2026-10-02/run.py
+```
+
+Outcome/output: [artifacts/ux-013542215658-verify-checkout-and-inspect-ux-surfaces.txt](artifacts/ux-013542215658-verify-checkout-and-inspect-ux-surfaces.txt).
+
+### 011 — 2026-10-03T01:35:42.574807+00:00 — frontend: Inspect router and test inventory
+
+End: 2026-10-03T01:35:42.596293+00:00; duration: 0.021 seconds; exit: **0**.
+
+```sh
+rg --files -g "!**/.env*" -g "!**/credentials*" app tests docs .github | head -120 && cat pyproject.toml && sed -n "1,240p" app/main.py && rg -n "TestClient|ASGITransport|fixture|openapi|schema" tests
+```
+
+Outcome/output: [artifacts/frontend-013542574807-inspect-router-and-test-inventory.txt](artifacts/frontend-013542574807-inspect-router-and-test-inventory.txt).
+

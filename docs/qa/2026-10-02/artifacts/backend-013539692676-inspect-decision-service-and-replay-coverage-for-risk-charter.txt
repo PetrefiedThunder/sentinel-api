@@ -1,0 +1,715 @@
+    # (persisted, so it survives restarts and any approval-state changes).
+    nonce = token_nonce(payload.token)
+    try:
+        if await is_nonce_consumed(db, nonce):
+            raise HTTPException(409, "Approval token already used")
+        approval = await db.scalar(
+            select(Approval)
+            .where(Approval.id == action_id)
+            # FOR NO KEY UPDATE keeps audit FK reads compatible with this lock.
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        if not approval:
+            raise HTTPException(404, "Not found")
+        # The same token may have committed while this request waited for the
+        # approval lock. Preserve 409 for replay, 400 for a different token.
+        if await is_nonce_consumed(db, nonce):
+            raise HTTPException(409, "Approval token already used")
+        if approval.decision != "pending":
+            raise HTTPException(400, f"Already {approval.decision}")
+
+        approval.decision = decision
+        approval.decided_by = "signed_link"
+        approval.decided_at = _utcnow()
+        approval.reason = "Signed approval link"
+        mark_nonce_consumed(db, nonce, action_id)
+        await append_audit_event(
+            db, approval.tenant_id, action_id, f"decision:{decision}", commit=False
+        )
+        await db.commit()
+    except IntegrityError as error:
+        await _rollback_or_reraise_integrity_error(db, error)
+        # Audit failures are not necessarily nonce conflicts. Check the exact
+        # nonce after rollback before translating a constraint error to 409.
+        try:
+            consumed = await is_nonce_consumed(db, nonce)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await _rollback_or_reraise_integrity_error(db, error)
+            raise error from None
+        await _rollback_or_reraise_integrity_error(db, error)
+        if consumed:
+            raise HTTPException(409, "Approval token already used") from None
+        raise
+    except BaseException:
+        await db.rollback()
+        raise
+    await db.refresh(approval)
+    await notify_decision(db, approval.id)
+    await dispatch_approval_webhook(db, approval)
+    return _serialize(approval)
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, field_validator
+
+VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
+APPROVER_HELP = (
+    "approvers must be a non-empty list. "
+    "Use email (e.g. 'alice@acme.com'), 'mailto:alice@acme.com', or 'sms:+15551234567'."
+)
+
+
+def _is_supported_approver(value: str) -> bool:
+    if value.startswith("sms:"):
+        return bool(value[len("sms:"):].strip())
+    if value.startswith("mailto:"):
+        return "@" in value[len("mailto:"):]
+    return "@" in value and ":" not in value.split("@", 1)[0]
+
+
+class TenantSignup(BaseModel):
+    name: str
+    email: str
+    mode: str = "live"  # "live" | "test" — test workspaces never fire real email/SMS
+
+    @field_validator("mode")
+    @classmethod
+    def _valid_mode(cls, v: str) -> str:
+        if v not in ("live", "test"):
+            raise ValueError("mode must be 'live' or 'test'")
+        return v
+
+
+class TenantSignupResponse(BaseModel):
+    tenant_id: str
+    api_key: str
+
+
+class ApprovalCreate(BaseModel):
+    function_name: str
+    arguments: dict[str, Any] = {}
+    risk_level: str = "medium"
+    approvers: list[str] = []
+    timeout_seconds: int = 300
+
+    @field_validator("approvers")
+    @classmethod
+    def _validate_approvers(cls, v: list[str]) -> list[str]:
+        """Strip whitespace + format-check; empty list is OK here (per-tenant
+        / global defaults are applied in the service layer where we have
+        tenant context)."""
+        approvers = [x.strip() for x in v if isinstance(x, str) and x.strip()]
+        if any(not _is_supported_approver(a) for a in approvers):
+            raise ValueError(APPROVER_HELP)
+        return approvers
+
+    @field_validator("risk_level")
+    @classmethod
+    def _valid_risk(cls, v: str) -> str:
+        if v not in VALID_RISK_LEVELS:
+            raise ValueError(f"risk_level must be one of {sorted(VALID_RISK_LEVELS)}")
+        return v
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _positive_timeout(cls, v: int) -> int:
+        if v < 1 or v > 86400:
+            raise ValueError("timeout_seconds must be between 1 and 86400")
+        return v
+
+
+class ApprovalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    function_name: str
+    arguments: dict[str, Any] | None = None
+    risk_level: str
+    approvers: list[str] | None = None
+    timeout_seconds: int
+    decision: str
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    reason: str | None = None
+    created_at: datetime
+
+
+class DecisionRequest(BaseModel):
+    decision: str
+    decided_by: str
+    reason: str | None = None
+
+
+class TokenDecisionRequest(BaseModel):
+    token: str
+
+
+class TenantSettingsUpdate(BaseModel):
+    """Mutable tenant settings. All fields optional — only those set are touched."""
+    default_approvers: list[str] | None = None
+
+
+class AuditEventCreate(BaseModel):
+    action_id: str
+    execution_result: str
+    error: str | None = None
+
+
+class ApproverContactCreate(BaseModel):
+    channel: str = "sms"
+    phone_number: str
+    display_name: str | None = None
+    consent_attested: bool = False
+    consent_source: str = "dashboard"
+    consent_note: str | None = None
+
+    @field_validator("channel")
+    @classmethod
+    def _sms_only(cls, v: str) -> str:
+        if v != "sms":
+            raise ValueError("only sms contacts are supported")
+        return v
+
+
+class ApproverContactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    channel: str
+    phone_number: str
+    destination_last4: str
+    display_name: str | None = None
+    consent_status: str
+    consent_source: str
+    consent_note: str | None = None
+    consented_at: datetime | None = None
+    revoked_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+from fastapi import BackgroundTasks, HTTPException
+
+from app.config import settings
+from app.models import Approval
+from app.services.notifications import dispatch_approval_notifications
+
+
+def _resolve_approvers(caller_approvers: list, tenant) -> list:
+    """If caller specified approvers, use them. Otherwise fall back first to
+    the tenant's saved `default_approvers`, then to the global env-var
+    `DEFAULT_APPROVERS`. Raises 400 if all three are empty."""
+    if caller_approvers:
+        return caller_approvers
+    tenant_defaults = list(tenant.default_approvers or [])
+    if tenant_defaults:
+        return tenant_defaults
+    global_defaults = settings.default_approvers_list
+    if global_defaults:
+        return global_defaults
+    raise HTTPException(
+        400,
+        "approvers must be a non-empty list. Either pass `approvers` in the "
+        "request, or set tenant default_approvers via PATCH /v1/tenants/me, "
+        "or set DEFAULT_APPROVERS env on the server.",
+    )
+
+
+async def create_approval(db, tenant, payload, *, background_tasks: BackgroundTasks):
+    if background_tasks is None:
+        raise RuntimeError(
+            "create_approval requires request-scoped BackgroundTasks so "
+            "notifications cannot run before the approval transaction commits"
+        )
+    resolved_approvers = _resolve_approvers(payload.approvers, tenant)
+    approval = Approval(
+        tenant_id=tenant.id,
+        function_name=payload.function_name,
+        arguments=payload.arguments,
+        risk_level=payload.risk_level,
+        approvers=resolved_approvers,
+        timeout_seconds=payload.timeout_seconds,
+    )
+    db.add(approval)
+    # Keep the approval in the caller's transaction. The approvals route wraps
+    # this write in run_with_idempotency(), which commits the Approval and the
+    # completed IdempotencyKey response atomically. Committing here would leave
+    # a crash window where the approval exists but the claim still looks
+    # in-progress, allowing a stale retry to create a duplicate approval.
+    await db.flush()
+    await db.refresh(approval)
+    # Freeze a plain-data snapshot so background tasks don't touch a closed session.
+    snapshot = type("ApprovalSnapshot", (), {
+        "id": approval.id,
+        "tenant_id": approval.tenant_id,
+        "function_name": approval.function_name,
+        "arguments": approval.arguments,
+        "risk_level": approval.risk_level,
+        "approvers": list(approval.approvers or []),
+        "timeout_seconds": approval.timeout_seconds,
+    })()
+    background_tasks.add_task(dispatch_approval_notifications, snapshot, tenant)
+    return approval
+"""Idempotency-Key support — Stripe-style replay protection for writes.
+
+Customer sends `Idempotency-Key: <opaque>` header on POST. If we've seen
+that (tenant_id, idempotency_key) before:
+
+  - Same request body  → return the stored response verbatim (200/201, no
+                          DB writes, no notifications fired)
+  - Different body     → 409 Conflict ("key was used with different payload")
+
+If we haven't seen it: the handler runs normally and we record the response
+to play back next time.
+
+Why: networks retry. Without idempotency, an SDK that retries a flaky POST
+can create two approval rows, fire two emails, and wedge the agent's
+wait_for_decision() loop. With it, the second POST returns the original
+approval's id and nothing else happens.
+
+Concurrency (claim-first)
+-------------------------
+Two requests can arrive with the SAME (tenant_id, idempotency_key) close
+enough that both miss the initial lookup. We close that race the same way the
+decision-nonce path does (app/services/nonce_store.py): let the database's
+primary-key constraint pick a single winner.
+
+Before running the handler we CLAIM the (tenant, key) row — insert a row with
+an in-progress marker and flush it. The flush either succeeds (we own the key,
+proceed to run the handler exactly once) or raises IntegrityError (a concurrent
+request already claimed it; we never run the handler, never create a duplicate
+Approval — we replay the winner's stored response instead).
+
+The winner claims, runs the handler, stores its real response, and commits all
+handler writes plus the completed claim atomically. A crash before that commit
+rolls everything back. A loser that arrives while the winner is running polls
+briefly for the stored response and replays it. A committed in-progress claim
+from an older deployment has an indeterminate outcome and fails closed with
+409; re-running it could duplicate an already-committed side effect.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.models import IdempotencyKey
+
+
+def _utcnow() -> datetime:
+    """Naive UTC `now`, comparable to the naive `created_at` written by the
+    model's `datetime.utcnow` default (mirrors app/services/contacts.py)."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+# Sentinel stored in `response_status` while the winner is still running its
+# handler. A row in this state has been CLAIMED but its real response is not
+# yet persisted. `response_status` is a valid HTTP status everywhere else, so 0
+# (not a real HTTP status) unambiguously means "in progress".
+_IN_PROGRESS = 0
+
+# Bounded poll for a concurrent winner to publish its stored response before we
+# give up and return the degraded 409. Total wait ≈ attempts * delay.
+_POLL_ATTEMPTS = 5
+_POLL_DELAY_SECONDS = 0.05
+
+
+def _hash_body(body: Any) -> str:
+    """Stable hash of the request body for replay-mismatch detection."""
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _replay(row: IdempotencyKey) -> Any:
+    """Return the stored response. Preserve the original status code: for the
+    default 200 case return the plain dict (so the first response and the
+    replay are byte-for-byte identical under FastAPI's default encoding); for a
+    non-200 status (e.g. 201) return a JSONResponse carrying that status."""
+    body = row.response_body
+    if row.response_status == 200:
+        return body
+    return JSONResponse(content=body, status_code=row.response_status)
+
+
+async def _replay_existing(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    idempotency_key: str,
+    body_hash: str,
+    row: IdempotencyKey,
+) -> Any:
+    """Handle a row we found via the initial lookup: enforce the body-hash
+    match, then either replay the stored response or — if the winner is still
+    in progress — poll briefly and replay, else return the degraded 409.
+
+    A stale committed claim has an indeterminate outcome: an older deployment
+    may have committed the handler's side effect before storing the response.
+    It fails closed rather than re-running a potentially destructive write."""
+    if row.request_hash != body_hash:
+        raise HTTPException(
+            409,
+            "Idempotency-Key was previously used with a different request body. "
+            "Pick a new key or send the original payload exactly.",
+        )
+    if row.response_status != _IN_PROGRESS:
+        return _replay(row)
+
+    cutoff = _utcnow() - timedelta(seconds=settings.IDEMPOTENCY_INPROGRESS_TTL_SECONDS)
+    if row.created_at < cutoff:
+        raise HTTPException(
+            409,
+            "The original request outcome is indeterminate. Automatic re-execution "
+            "is disabled to prevent duplicate side effects; reconcile the original "
+            "request before using a new Idempotency-Key.",
+        )
+
+    return await _poll_for_response(db, tenant_id=tenant_id, idempotency_key=idempotency_key)
+
+
+async def _run_and_store(
+    db: AsyncSession,
+    *,
+    claim: IdempotencyKey,
+    handler: Callable[[], Awaitable[dict]],
+    status_code: int,
+) -> Any:
+    """Own an in-progress claim, run the handler exactly once, persist the real
+    response, and return it (encoded so the first response matches the replay).
+
+    The handler must not commit independently: its writes and the completed
+    claim are one unit of work. Any failure rolls the whole unit back."""
+    try:
+        response = await handler()
+
+        # The handler's response may contain non-JSON-native values (e.g.
+        # datetime in `created_at`/`decided_at`). Encode before storing it in
+        # the JSON response_body column and return the same encoded form so the
+        # first response is byte-for-byte identical to later replays.
+        encoded = jsonable_encoder(response)
+
+        claim.response_status = status_code
+        claim.response_body = encoded
+        db.add(claim)
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+
+    if status_code == 200:
+        return encoded
+    return JSONResponse(content=encoded, status_code=status_code)
+
+
+async def _poll_for_response(db: AsyncSession, *, tenant_id: str, idempotency_key: str) -> Any:
+    """Wait briefly for a concurrent winner to publish its stored response.
+
+    Returns the replayed response once available, or raises 409 if the winner
+    has not stored a response within the bounded window (degraded fallback)."""
+    for _ in range(_POLL_ATTEMPTS):
+        await asyncio.sleep(_POLL_DELAY_SECONDS)
+        # Drop any cached copy so we observe another transaction's commit.
+        db.expire_all()
+        row = await db.get(IdempotencyKey, (tenant_id, idempotency_key))
+        if row is not None and row.response_status != _IN_PROGRESS:
+            return _replay(row)
+    raise HTTPException(
+        409,
+        "A request with this Idempotency-Key is already in progress. Retry shortly.",
+    )
+
+
+async def run_with_idempotency(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    idempotency_key: str | None,
+    method: str,
+    path: str,
+    request_body: Any,
+    handler: Callable[[], Awaitable[dict]],
+    status_code: int = 200,
+) -> Any:
+    """Run `handler()` exactly once per (tenant, idempotency_key).
+
+    If the key is None or empty, skip the claim dance but still own the write
+    transaction: commit a successful handler or roll it back on failure.
+    Customers who don't pass the header get no idempotency guarantee.
+
+    `status_code` is the success status the endpoint would return on a fresh
+    run (default 200); it is stored and replayed so e.g. a 201-returning
+    endpoint replays as 201.
+    """
+    if not idempotency_key:
+        try:
+            response = await handler()
+            await db.commit()
+            return response
+        except BaseException:
+            await db.rollback()
+            raise
+
+    if len(idempotency_key) > 255:
+        raise HTTPException(400, "Idempotency-Key max length is 255 characters")
+
+    body_hash = _hash_body(request_body)
+
+    existing = await db.get(IdempotencyKey, (tenant_id, idempotency_key))
+    if existing is not None:
+        return await _replay_existing(
+            db,
+            tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+            body_hash=body_hash,
+            row=existing,
+        )
+
+    # First time we've seen this key — CLAIM it before doing any work. Insert an
+    # in-progress row and flush so the DB's primary-key constraint adjudicates
+    # concurrent claimants. If the flush raises IntegrityError, another request
+    # won the claim; we must NOT run the handler (that would create a duplicate
+    # Approval) — roll back and replay the winner's response instead.
+    claim = IdempotencyKey(
+        tenant_id=tenant_id,
+        idempotency_key=idempotency_key,
+        method=method.upper(),
+        path=path,
+        request_hash=body_hash,
+        response_status=_IN_PROGRESS,
+        response_body={},
+    )
+    db.add(claim)
+"""Decision, optional nonce, and audit evidence must commit as one unit."""
+
+import asyncio
+import secrets
+from datetime import UTC, datetime
+
+import httpx
+import pytest
+import pytest_asyncio
+from fastapi import FastAPI, HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.auth import generate_api_key
+from app.config import settings
+from app.db import Base, get_db
+from app.models import ApiKey, Approval, AuditEvent, ConsumedDecisionNonce, Tenant
+from app.routers import approvals
+from app.schemas import DecisionRequest, TokenDecisionRequest
+from app.services.approval_tokens import create_decision_token
+from app.services.audit_log import append_audit_event
+
+TENANT_ID = "ten_decision_atomic"
+ACTION_ID = "act_decision_atomic"
+
+
+@pytest_asyncio.fixture
+async def sessions(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "JWT_SECRET", secrets.token_hex(32))
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'decisions.sqlite'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as seed:
+        seed.add(
+            Tenant(id=TENANT_ID, name="Decision test", email="atomic@example.invalid", mode="test")
+        )
+        await seed.flush()
+        seed.add(Approval(id=ACTION_ID, tenant_id=TENANT_ID, function_name="transfer_funds"))
+        await seed.commit()
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
+
+
+async def _decide(session, route, token):
+    if route == "token":
+        return await approvals.decide_with_token(
+            ACTION_ID, TokenDecisionRequest(token=token), db=session
+        )
+    tenant = await session.get(Tenant, TENANT_ID)
+    return await approvals.decide(
+        ACTION_ID,
+        DecisionRequest(decision="approved", decided_by="test_approver"),
+        db=session,
+        tenant=tenant,
+    )
+
+
+async def _state(sessions):
+    async with sessions() as observer:
+        approval = await observer.get(Approval, ACTION_ID)
+        audits = await observer.scalar(select(func.count()).select_from(AuditEvent))
+        nonces = await observer.scalar(select(func.count()).select_from(ConsumedDecisionNonce))
+        return approval.decision, audits, nonces
+
+
+@pytest.mark.parametrize("route", ["authenticated", "token"])
+async def test_audit_failure_does_not_persist_decision(sessions, monkeypatch, route):
+    """Baseline control: audit failure must not strand a terminal decision."""
+    notifications = []
+
+    async def fail_audit(*args, **kwargs):
+        raise RuntimeError("injected audit append failure")
+
+    async def record_side_effect(*args):
+        notifications.append("unexpected dispatch")
+
+    monkeypatch.setattr(approvals, "append_audit_event", fail_audit)
+    monkeypatch.setattr(approvals, "notify_decision", record_side_effect)
+    monkeypatch.setattr(approvals, "dispatch_approval_webhook", record_side_effect)
+    token = create_decision_token(ACTION_ID, "approved", expires_in_seconds=300)
+    async with sessions() as failed:
+        with pytest.raises(RuntimeError, match="injected audit append failure"):
+            await _decide(failed, route, token)
+        assert await _state(sessions) == ("pending", 0, 0)
+        assert not failed.in_transaction()
+        assert notifications == []
+
+
+@pytest.fixture
+def dispatches(sessions, monkeypatch):
+    calls = []
+
+    async def notify(db, action_id):
+        assert action_id == ACTION_ID
+        assert (await _state(sessions))[:2] == ("approved", 1)
+        calls.append("notify")
+
+    async def webhook(db, approval):
+        assert approval.id == ACTION_ID
+        assert (await _state(sessions))[:2] == ("approved", 1)
+        calls.append("webhook")
+
+    monkeypatch.setattr(approvals, "notify_decision", notify)
+    monkeypatch.setattr(approvals, "dispatch_approval_webhook", webhook)
+    return calls
+
+
+@pytest.mark.parametrize("route", ["authenticated", "token"])
+@pytest.mark.parametrize("failure", ["after_audit", "commit", "cancel"])
+async def test_staged_decision_failure_rolls_back_and_retries(
+    sessions, monkeypatch, dispatches, route, failure
+):
+    staged = asyncio.Event()
+    release = asyncio.Event()
+    token = create_decision_token(ACTION_ID, "approved", expires_in_seconds=300)
+
+    async def append_then_fail(*args, **kwargs):
+        await append_audit_event(*args, **kwargs)
+        if failure == "cancel":
+            staged.set()
+            await release.wait()
+        raise RuntimeError("injected failure after audit staging")
+
+    async with sessions() as failed:
+
+        async def fail_commit():
+            assert await failed.scalar(select(func.count()).select_from(AuditEvent)) == 1
+            raise RuntimeError("injected failure before commit")
+
+        with monkeypatch.context() as patch:
+            if failure == "commit":
+                patch.setattr(failed, "commit", fail_commit)
+            else:
+                patch.setattr(approvals, "append_audit_event", append_then_fail)
+            if failure == "cancel":
+                task = asyncio.create_task(_decide(failed, route, token))
+                try:
+                    async with asyncio.timeout(5):
+                        await staged.wait()
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        async with asyncio.timeout(5):
+                            await task
+                finally:
+                    task.cancel()
+                    async with asyncio.timeout(5):
+                        await asyncio.gather(task, return_exceptions=True)
+            else:
+                with pytest.raises(RuntimeError, match="injected failure"):
+                    await _decide(failed, route, token)
+        assert await _state(sessions) == ("pending", 0, 0)
+        assert not failed.in_transaction()
+        assert dispatches == []
+
+    async with sessions() as retry:
+        response = await _decide(retry, route, token)
+        assert response["decision"] == "approved"
+    assert await _state(sessions) == ("approved", 1, int(route == "token"))
+    assert dispatches == ["notify", "webhook"]
+    async with sessions() as replay:
+        with pytest.raises(HTTPException) as error:
+            await _decide(replay, route, token)
+        assert error.value.status_code == (409 if route == "token" else 400)
+    assert dispatches == ["notify", "webhook"]
+
+
+@pytest.mark.parametrize("commit", [True, False])
+async def test_audit_helper_preserves_default_commit_and_supports_staging(sessions, commit):
+    async with sessions() as session:
+        if commit:
+            event = await append_audit_event(session, TENANT_ID, ACTION_ID, "observed")
+        else:
+            event = await append_audit_event(
+                session, TENANT_ID, ACTION_ID, "observed", commit=False
+            )
+        assert event.id and event.event_hash
+        assert await _state(sessions) == ("pending", int(commit), 0)
+        await session.rollback()
+    assert await _state(sessions) == ("pending", int(commit), 0)
+
+
+@pytest.mark.parametrize("route", ["authenticated", "token"])
+async def test_audit_constraint_failure_is_not_a_token_replay(
+    sessions, monkeypatch, dispatches, route
+):
+    async with sessions() as seed:
+        existing = await append_audit_event(seed, TENANT_ID, ACTION_ID, "existing")
+        existing_id = existing.id
+
+    async def duplicate_audit(db, tenant_id, action_id, execution_result, *, commit):
+        db.add(
+            AuditEvent(
+                id=existing_id,
+                tenant_id=tenant_id,
+                action_id=action_id,
+                execution_result=execution_result,
+                event_hash="will-not-persist",
+            )
+        )
+        await db.flush()
+
+    monkeypatch.setattr(approvals, "append_audit_event", duplicate_audit)
+    token = create_decision_token(ACTION_ID, "approved", expires_in_seconds=300)
+    async with sessions() as failed:
+        with pytest.raises(IntegrityError):
+            await _decide(failed, route, token)
+        assert await _state(sessions) == ("pending", 1, 0)
+        assert not failed.in_transaction()
+        assert dispatches == []
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("initial_rollback", "integrity"),
+        ("nonce_lookup", "integrity"),

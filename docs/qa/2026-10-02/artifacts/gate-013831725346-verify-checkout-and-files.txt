@@ -1,0 +1,11 @@
+/Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api
+/Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api cfe4270 [qa/2026-10-02-sweep]
+qa/2026-10-02-sweep
+https://github.com/PetrefiedThunder/sentinel-api.git
+tests/test_qa_backend.py
+tests/test_qa_contract.py
+tests/test_qa_dx.py
+docs/qa/2026-10-02/pytest_safe.py
+docs/qa/2026-10-02/PLAN.md
+docs/qa/2026-10-02/UX-LOG.md
+docs/qa/2026-10-02/FRONTEND-LOG.md

@@ -1,0 +1,155 @@
+.....................FFFFF.........FFFFF.FF.FFF.....................     [100%]
+=================================== FAILURES ===================================
+_____ test_recovery_token_is_single_use_and_preserves_first_recovered_key ______
+tests/test_qa_backend.py:160: in test_recovery_token_is_single_use_and_preserves_first_recovered_key
+    assert (replay.status_code in (400, 401, 409), unchanged) == (True, True)
+E   assert (False, False) == (True, True)
+E     
+E     At index 0 diff: False != True
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/tenants/recover/exchange \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-10-03T01:39:22.294434Z"}
+{"event": "HTTP Request: POST http://qa.local/v1/tenants/recover/exchange \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-10-03T01:39:22.295987Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/tenants/recover/exchange "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/tenants/recover/exchange "HTTP/1.1 200 OK"
+______________ test_onboarding_rejects_weak_signing_configuration ______________
+tests/test_qa_backend.py:168: in test_onboarding_rejects_weak_signing_configuration
+    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE RuntimeError
+_ test_webhook_registration_rejects_private_network_targets[http://127.0.0.1/hook] _
+tests/test_qa_backend.py:177: in test_webhook_registration_rejects_private_network_targets
+    assert response.status_code in (400, 422)
+E   assert 200 in (400, 422)
+E    +  where 200 = <Response [200 OK]>.status_code
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/webhooks \"HTTP/1.1 200 OK\"", "level": "info", "tenant_id": "ten_qa_owner", "api_key_id": "key_9decf903a570471d", "timestamp": "2026-10-03T01:39:22.347804Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/webhooks "HTTP/1.1 200 OK"
+_ test_webhook_registration_rejects_private_network_targets[http://10.0.0.1/hook] _
+tests/test_qa_backend.py:177: in test_webhook_registration_rejects_private_network_targets
+    assert response.status_code in (400, 422)
+E   assert 200 in (400, 422)
+E    +  where 200 = <Response [200 OK]>.status_code
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/webhooks \"HTTP/1.1 200 OK\"", "level": "info", "tenant_id": "ten_qa_owner", "api_key_id": "key_33f737c34efc4e9d", "timestamp": "2026-10-03T01:39:22.371203Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/webhooks "HTTP/1.1 200 OK"
+_ test_webhook_registration_rejects_private_network_targets[http://[::1]/hook] _
+tests/test_qa_backend.py:177: in test_webhook_registration_rejects_private_network_targets
+    assert response.status_code in (400, 422)
+E   assert 200 in (400, 422)
+E    +  where 200 = <Response [200 OK]>.status_code
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/webhooks \"HTTP/1.1 200 OK\"", "level": "info", "tenant_id": "ten_qa_owner", "api_key_id": "key_f728aba8c9194470", "timestamp": "2026-10-03T01:39:22.393315Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/webhooks "HTTP/1.1 200 OK"
+_ test_unicode_token_signature_is_a_client_error[/v1/approvals/act_qa_owner/token-decision] _
+tests/test_qa_backend.py:197: in test_unicode_token_signature_is_a_client_error
+    assert response.status_code in (400, 401)
+E   assert 500 in (400, 401)
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/approvals/act_qa_owner/token-decision \"HTTP/1.1 500 Internal Server Error\"", "level": "info", "timestamp": "2026-10-03T01:39:22.556432Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/approvals/act_qa_owner/token-decision "HTTP/1.1 500 Internal Server Error"
+_ test_unicode_token_signature_is_a_client_error[/v1/tenants/recover/exchange] _
+tests/test_qa_backend.py:197: in test_unicode_token_signature_is_a_client_error
+    assert response.status_code in (400, 401)
+E   assert 500 in (400, 401)
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/tenants/recover/exchange \"HTTP/1.1 500 Internal Server Error\"", "level": "info", "timestamp": "2026-10-03T01:39:22.575740Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/tenants/recover/exchange "HTTP/1.1 500 Internal Server Error"
+___ test_unicode_token_signature_is_a_client_error[/v1/tenants/verify-email] ___
+tests/test_qa_backend.py:197: in test_unicode_token_signature_is_a_client_error
+    assert response.status_code in (400, 401)
+E   assert 500 in (400, 401)
+E    +  where 500 = <Response [500 Internal Server Error]>.status_code
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/tenants/verify-email \"HTTP/1.1 500 Internal Server Error\"", "level": "info", "timestamp": "2026-10-03T01:39:22.598106Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/tenants/verify-email "HTTP/1.1 500 Internal Server Error"
+_________________ test_recovered_key_keeps_test_workspace_mode _________________
+tests/test_qa_backend.py:206: in test_recovered_key_keeps_test_workspace_mode
+    assert has_test_prefix
+E   assert False
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/tenants/recover/exchange \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-10-03T01:39:22.620498Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/tenants/recover/exchange "HTTP/1.1 200 OK"
+_ test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver _
+tests/test_qa_backend.py:222: in test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver
+    assert fallback.status_code == 400
+E   assert 200 == 400
+E    +  where 200 = <Response [200 OK]>.status_code
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/approvals \"HTTP/1.1 400 Bad Request\"", "level": "info", "tenant_id": "ten_qa_owner", "api_key_id": "key_bc8c13e06c384f63", "timestamp": "2026-10-03T01:39:22.641674Z"}
+{"event": "HTTP Request: PATCH http://qa.local/v1/tenants/me \"HTTP/1.1 200 OK\"", "level": "info", "tenant_id": "ten_qa_owner", "api_key_id": "key_bc8c13e06c384f63", "timestamp": "2026-10-03T01:39:22.647194Z"}
+{"event": "HTTP Request: POST http://qa.local/v1/approvals \"HTTP/1.1 200 OK\"", "level": "info", "tenant_id": "ten_qa_owner", "api_key_id": "key_bc8c13e06c384f63", "timestamp": "2026-10-03T01:39:22.649977Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/approvals "HTTP/1.1 400 Bad Request"
+INFO     httpx:_client.py:1740 HTTP Request: PATCH http://qa.local/v1/tenants/me "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/approvals "HTTP/1.1 200 OK"
+_____ test_unsigned_twilio_callback_cannot_change_multiple_tenants[False] ______
+tests/test_qa_backend.py:239: in test_unsigned_twilio_callback_cannot_change_multiple_tenants
+    assert (response.status_code in (401, 503), unchanged) == (True, True)
+E   assert (False, False) == (True, True)
+E     
+E     At index 0 diff: False != True
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/webhooks/twilio/inbound \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-10-03T01:39:22.704592Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/webhooks/twilio/inbound "HTTP/1.1 200 OK"
+_____________ test_audit_csv_neutralizes_spreadsheet_formula_cells _____________
+tests/test_qa_backend.py:254: in test_audit_csv_neutralizes_spreadsheet_formula_cells
+    assert rows[0]["error"].startswith("'=")
+E   assert False
+E    +  where False = <built-in method startswith of str object at 0x10a128780>("'=")
+E    +    where <built-in method startswith of str object at 0x10a128780> = '=1+1'.startswith
+----------------------------- Captured stdout call -----------------------------
+{"event": "HTTP Request: POST http://qa.local/v1/audit-events \"HTTP/1.1 200 OK\"", "level": "info", "tenant_id": "ten_qa_owner", "api_key_id": "key_b3b0071f98fd4684", "timestamp": "2026-10-03T01:39:22.732549Z"}
+{"event": "HTTP Request: GET http://qa.local/v1/audit-events.csv \"HTTP/1.1 200 OK\"", "level": "info", "tenant_id": "ten_qa_owner", "api_key_id": "key_b3b0071f98fd4684", "timestamp": "2026-10-03T01:39:22.735177Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: POST http://qa.local/v1/audit-events "HTTP/1.1 200 OK"
+INFO     httpx:_client.py:1740 HTTP Request: GET http://qa.local/v1/audit-events.csv "HTTP/1.1 200 OK"
+________________ test_openapi_types_primary_approval_responses _________________
+tests/test_qa_contract.py:99: in test_openapi_types_primary_approval_responses
+    assert response["content"]["application/json"]["schema"], (method, path)
+E   AssertionError: ('post', '/v1/approvals')
+E   assert {}
+______________ test_openapi_declares_runtime_request_constraints _______________
+tests/test_qa_contract.py:106: in test_openapi_declares_runtime_request_constraints
+    assert approval["timeout_seconds"].get("minimum") == 1
+E   AssertionError: assert None == 1
+E    +  where None = <built-in method get of dict object at 0x10a2a2900>('minimum')
+E    +    where <built-in method get of dict object at 0x10a2a2900> = {'type': 'integer', 'title': 'Timeout Seconds', 'default': 300}.get
+_________________ test_openapi_csv_media_type_matches_runtime __________________
+tests/test_qa_contract.py:122: in test_openapi_csv_media_type_matches_runtime
+    assert media_type in documented["content"]
+E   AssertionError: assert 'text/csv' in {'application/json': {'schema': {}}}
+----------------------------- Captured stdout call -----------------------------
+{"status_code": 200, "event": "request.completed", "level": "info", "request_id": "7f233fb9c6f3acbb", "method": "GET", "route": "/v1/audit-events.csv", "timestamp": "2026-10-03T01:39:22.771145Z"}
+{"event": "HTTP Request: GET http://qa.invalid/v1/audit-events.csv \"HTTP/1.1 200 OK\"", "level": "info", "timestamp": "2026-10-03T01:39:22.771903Z"}
+------------------------------ Captured log call -------------------------------
+INFO     httpx:_client.py:1740 HTTP Request: GET http://qa.invalid/v1/audit-events.csv "HTTP/1.1 200 OK"
+=========================== short test summary info ============================
+FAILED tests/test_qa_backend.py::test_recovery_token_is_single_use_and_preserves_first_recovered_key
+FAILED tests/test_qa_backend.py::test_onboarding_rejects_weak_signing_configuration
+FAILED tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://127.0.0.1/hook]
+FAILED tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://10.0.0.1/hook]
+FAILED tests/test_qa_backend.py::test_webhook_registration_rejects_private_network_targets[http://[::1]/hook]
+FAILED tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/approvals/act_qa_owner/token-decision]
+FAILED tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/tenants/recover/exchange]
+FAILED tests/test_qa_backend.py::test_unicode_token_signature_is_a_client_error[/v1/tenants/verify-email]
+FAILED tests/test_qa_backend.py::test_recovered_key_keeps_test_workspace_mode
+FAILED tests/test_qa_backend.py::test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver
+FAILED tests/test_qa_backend.py::test_unsigned_twilio_callback_cannot_change_multiple_tenants[False]
+FAILED tests/test_qa_backend.py::test_audit_csv_neutralizes_spreadsheet_formula_cells
+FAILED tests/test_qa_contract.py::test_openapi_types_primary_approval_responses
+FAILED tests/test_qa_contract.py::test_openapi_declares_runtime_request_constraints
+FAILED tests/test_qa_contract.py::test_openapi_csv_media_type_matches_runtime
+15 failed, 53 passed, 504 warnings in 1.55s

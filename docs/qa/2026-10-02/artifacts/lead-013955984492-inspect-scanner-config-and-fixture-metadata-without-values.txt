@@ -1,0 +1,6 @@
+.gitleaks.toml
+docs/qa/2026-10-02/artifacts/gitleaks-tracked.json
+fixture function: test_send_welcome_email_invokes_send line: 54 end: 69
+patches outbound sender: True
+call name: asyncio.run arguments omitted
+call name: onboarding.send_welcome_email arguments omitted

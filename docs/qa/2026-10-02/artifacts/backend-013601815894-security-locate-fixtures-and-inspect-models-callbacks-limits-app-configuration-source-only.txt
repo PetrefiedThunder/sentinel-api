@@ -1,0 +1,586 @@
+app/logging_setup.py
+tests/test_idempotency_replay.py
+tests/test_coverage_contacts_service.py
+tests/test_coverage_audit_router.py
+tests/test_decision_postgres.py
+tests/test_coverage_billing.py
+tests/test_schemas.py
+tests/test_approval_sms_consent.py
+tests/test_coverage_admin.py
+tests/test_idempotency_race.py
+tests/test_coverage_onboarding.py
+tests/test_approver_contacts.py
+tests/test_webhook_dispatch.py
+tests/test_idempotency_ttl.py
+tests/test_coverage_webhooks.py
+tests/test_twilio_webhooks.py
+tests/test_signed_decision_links.py
+tests/test_notifications.py
+tests/test_delivery_outbox_migration.py
+tests/test_routes.py
+tests/test_cursor_pagination.py
+tests/test_chain_verify.py
+tests/test_coverage_decision_bus.py
+tests/test_token_decision_replay.py
+tests/test_middleware_contract.py
+tests/test_approval_tokens.py
+tests/test_idempotency_postgres.py
+tests/test_tsa.py
+tests/test_coverage_tenants.py
+tests/test_migrations_roundtrip.py
+tests/test_read_replica.py
+tests/test_status_history.py
+tests/test_decision_atomicity.py
+tests/test_support.py
+app/config.py
+app/db.py
+app/auth.py
+app/services/audit_log.py
+app/services/webhooks.py
+app/services/pagination.py
+app/services/approval_tokens.py
+app/services/nonce_store.py
+app/services/notifications.py
+app/services/rate_limit.py
+app/services/notification_attempts.py
+app/services/decision_bus.py
+app/services/approval_service.py
+app/services/__init__.py
+app/services/onboarding.py
+app/services/idempotency.py
+app/services/contacts.py
+app/services/tsa.py
+app/main.py
+app/schemas.py
+app/__init__.py
+app/models.py
+app/routers/tenants.py
+app/routers/webhooks.py
+app/routers/status_history.py
+app/routers/admin.py
+app/routers/__init__.py
+app/routers/twilio_webhooks.py
+app/routers/approvals.py
+app/routers/billing.py
+app/routers/approver_contacts.py
+app/routers/audit.py
+     1	from datetime import datetime
+     2	from uuid import uuid4
+     3	
+     4	from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+     5	from sqlalchemy.orm import Mapped, mapped_column
+     6	
+     7	from app.db import Base
+     8	
+     9	
+    10	def make_id(prefix: str) -> str:
+    11	    return f"{prefix}_{uuid4().hex[:16]}"
+    12	
+    13	
+    14	# backwards-compat alias
+    15	gen_id = make_id
+    16	
+    17	
+    18	class Tenant(Base):
+    19	    __tablename__ = "tenants"
+    20	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("ten"))
+    21	    name: Mapped[str] = mapped_column(String, nullable=False)
+    22	    email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    23	    default_approvers: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    24	    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    25	    plan: Mapped[str] = mapped_column(String, default="free", server_default="free")
+    26	    mode: Mapped[str] = mapped_column(String, default="live", server_default="live")
+    27	    stripe_customer_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    28	    stripe_subscription_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    29	    plan_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    30	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    31	
+    32	
+    33	class ApiKey(Base):
+    34	    __tablename__ = "api_keys"
+    35	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("key"))
+    36	    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), nullable=False)
+    37	    key_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    38	    prefix: Mapped[str] = mapped_column(String, nullable=False)
+    39	    name: Mapped[str] = mapped_column(String, default="default")
+    40	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    41	    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    42	
+    43	
+    44	class Approval(Base):
+    45	    __tablename__ = "approvals"
+    46	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("act"))
+    47	    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True, nullable=False)
+    48	    function_name: Mapped[str] = mapped_column(String, nullable=False)
+    49	    arguments: Mapped[dict] = mapped_column(JSON, default=dict)
+    50	    risk_level: Mapped[str] = mapped_column(String, default="medium")
+    51	    approvers: Mapped[list] = mapped_column(JSON, default=list)
+    52	    timeout_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    53	    decision: Mapped[str] = mapped_column(String, default="pending")
+    54	    decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    55	    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    56	    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    57	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    58	
+    59	
+    60	class IdempotencyKey(Base):
+    61	    __tablename__ = "idempotency_keys"
+    62	    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), primary_key=True)
+    63	    idempotency_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    64	    method: Mapped[str] = mapped_column(String(10), nullable=False)
+    65	    path: Mapped[str] = mapped_column(String(255), nullable=False)
+    66	    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    67	    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    68	    response_body: Mapped[dict] = mapped_column(JSON, nullable=False)
+    69	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    70	
+    71	
+    72	class ConsumedDecisionNonce(Base):
+    73	    """Single-use tracking for signed decision tokens (replay protection).
+    74	
+    75	    `nonce` is the SHA-256 hex digest of the presented token — the raw
+    76	    token is never stored. Inserted in the same transaction as the
+    77	    decision; the primary key makes concurrent reuse lose the race.
+    78	    """
+    79	
+    80	    __tablename__ = "consumed_decision_nonces"
+    81	    nonce: Mapped[str] = mapped_column(String(64), primary_key=True)
+    82	    action_id: Mapped[str] = mapped_column(String, ForeignKey("approvals.id"), index=True, nullable=False)
+    83	    consumed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    84	
+    85	
+    86	class WebhookEndpoint(Base):
+    87	    __tablename__ = "webhook_endpoints"
+    88	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("whk"))
+    89	    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+    90	    url: Mapped[str] = mapped_column(String, nullable=False)
+    91	    secret: Mapped[str] = mapped_column(String, nullable=False)
+    92	    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    93	    event_filter: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    94	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    95	    disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    96	    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    97	    last_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    98	
+    99	
+   100	class WebhookDelivery(Base):
+   101	    __tablename__ = "webhook_deliveries"
+   102	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("whd"))
+   103	    endpoint_id: Mapped[str] = mapped_column(String, ForeignKey("webhook_endpoints.id"), nullable=False, index=True)
+   104	    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), nullable=False, index=True)
+   105	    event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+   106	    action_id: Mapped[str | None] = mapped_column(String, nullable=True)
+   107	    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+   108	    attempt: Mapped[int] = mapped_column(Integer, default=0)
+   109	    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+   110	    response_snippet: Mapped[str | None] = mapped_column(String, nullable=True)
+   111	    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+   112	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+   113	
+   114	
+   115	class AuditEvent(Base):
+   116	    __tablename__ = "audit_events"
+   117	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("evt"))
+   118	    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True, nullable=False)
+   119	    action_id: Mapped[str | None] = mapped_column(String, ForeignKey("approvals.id"), index=True, nullable=True)
+   120	    execution_result: Mapped[str] = mapped_column(String, default="pending")
+   121	    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+   122	    prev_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+   123	    event_hash: Mapped[str] = mapped_column(String, nullable=False)
+   124	    tsa_timestamp: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+   125	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+   126	
+   127	
+   128	class ApproverContact(Base):
+   129	    __tablename__ = "approver_contacts"
+   130	    __table_args__ = (
+   131	        UniqueConstraint("tenant_id", "channel", "destination_hash", name="uq_approver_contact_destination"),
+   132	    )
+   133	
+   134	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("con"))
+   135	    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True, nullable=False)
+   136	    channel: Mapped[str] = mapped_column(String, nullable=False, default="sms")
+   137	    destination: Mapped[str] = mapped_column(String, nullable=False)
+   138	    destination_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
+   139	    destination_last4: Mapped[str] = mapped_column(String, nullable=False)
+   140	    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+   141	    consent_status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+   142	    consent_source: Mapped[str] = mapped_column(String, nullable=False)
+   143	    consent_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+   144	    consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+   145	    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+   146	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+   147	    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+   148	
+   149	
+   150	class UptimeProbe(Base):
+   151	    __tablename__ = "uptime_probes"
+   152	
+   153	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("upt"))
+   154	    region: Mapped[str] = mapped_column(String, nullable=False, index=True)
+   155	    target: Mapped[str] = mapped_column(String, nullable=False)
+   156	    ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
+   157	    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+   158	    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+   159	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+   160	
+   161	
+   162	class NotificationAttempt(Base):
+   163	    __tablename__ = "notification_attempts"
+   164	
+   165	    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("ntf"))
+   166	    tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), index=True, nullable=False)
+   167	    action_id: Mapped[str | None] = mapped_column(String, ForeignKey("approvals.id"), index=True, nullable=True)
+   168	    contact_id: Mapped[str | None] = mapped_column(String, ForeignKey("approver_contacts.id"), index=True, nullable=True)
+   169	    channel: Mapped[str] = mapped_column(String, nullable=False)
+   170	    destination_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
+   171	    destination_last4: Mapped[str] = mapped_column(String, nullable=False)
+   172	    provider: Mapped[str] = mapped_column(String, nullable=False)
+   173	    provider_message_sid: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+   174	    provider_status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+   175	    error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+   176	    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+   177	    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+   178	    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+     1	from fastapi import APIRouter, Depends, HTTPException, Request, Response
+     2	from sqlalchemy.ext.asyncio import AsyncSession
+     3	from twilio.request_validator import RequestValidator
+     4	
+     5	from app.config import settings
+     6	from app.db import get_db
+     7	from app.services.audit_log import append_audit_event
+     8	from app.services.contacts import ACTIVE, REVOKED, set_sms_contact_status_by_phone
+     9	from app.services.notification_attempts import update_attempt_from_provider_status
+    10	
+    11	router = APIRouter(prefix="/webhooks/twilio", tags=["twilio"])
+    12	
+    13	STOP_WORDS = {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"}
+    14	START_WORDS = {"START", "YES", "UNSTOP"}
+    15	
+    16	
+    17	async def _verified_form(request: Request):
+    18	    form = await request.form()
+    19	    params = {key: str(value) for key, value in form.items()}
+    20	    signature = request.headers.get("X-Twilio-Signature", "")
+    21	    if settings.TWILIO_AUTH_TOKEN:
+    22	        validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+    23	        validation_url = f"{settings.PUBLIC_API_URL.rstrip('/')}{request.url.path}"
+    24	        if request.url.query:
+    25	            validation_url = f"{validation_url}?{request.url.query}"
+    26	        if not validator.validate(validation_url, params, signature):
+    27	            raise HTTPException(401, "Invalid Twilio signature")
+    28	    return params
+    29	
+    30	
+    31	@router.post("/status")
+    32	async def status_callback(
+    33	    request: Request,
+    34	    db: AsyncSession = Depends(get_db),
+    35	):
+    36	    params = await _verified_form(request)
+    37	    message_sid = params.get("MessageSid")
+    38	    message_status = params.get("MessageStatus")
+    39	    if not message_sid or not message_status:
+    40	        raise HTTPException(400, "Missing MessageSid or MessageStatus")
+    41	    attempt, changed = await update_attempt_from_provider_status(
+    42	        db,
+    43	        message_sid,
+    44	        message_status,
+    45	        params.get("ErrorCode"),
+    46	        params.get("ErrorMessage"),
+    47	    )
+    48	    if attempt and changed:
+    49	        await append_audit_event(
+    50	            db,
+    51	            attempt.tenant_id,
+    52	            attempt.action_id,
+    53	            f"notification:sms:{message_status}",
+    54	            params.get("ErrorMessage") or params.get("ErrorCode"),
+    55	        )
+    56	    return {"ok": True}
+    57	
+    58	
+    59	@router.post("/inbound")
+    60	async def inbound_message(
+    61	    request: Request,
+    62	    db: AsyncSession = Depends(get_db),
+    63	):
+    64	    params = await _verified_form(request)
+    65	    sender = params.get("From")
+    66	    if not sender:
+    67	        raise HTTPException(400, "Missing From")
+    68	    keyword = (params.get("OptOutType") or params.get("Body") or "").strip().upper()
+    69	    status = None
+    70	    action = None
+    71	    if keyword in STOP_WORDS:
+    72	        status = REVOKED
+    73	        action = "opt_out"
+    74	    elif keyword in START_WORDS:
+    75	        status = ACTIVE
+    76	        action = "opt_in"
+    77	    if status:
+    78	        contacts = await set_sms_contact_status_by_phone(db, sender, status, "twilio_inbound")
+    79	        for contact in contacts:
+    80	            await append_audit_event(
+    81	                db,
+    82	                contact.tenant_id,
+    83	                None,
+    84	                f"notification:sms:{action}",
+    85	                None,
+    86	            )
+    87	    return Response(content="", media_type="text/plain")
+     1	"""Tiny Redis-backed rate limiter for signup / recovery / other abuse-prone endpoints.
+     2	
+     3	Fixed-window counter — simplest thing that solves the abuse case without
+     4	adding a dependency. Two failure modes are designed to fail-open: if Redis
+     5	is unreachable, or the key is malformed, the limiter does NOT block — we'd
+     6	rather risk a brief abuse window than take signup offline.
+     7	"""
+     8	from __future__ import annotations
+     9	
+    10	import logging
+    11	
+    12	from fastapi import HTTPException, Request
+    13	from redis.asyncio import Redis
+    14	
+    15	from app.config import settings
+    16	
+    17	log = logging.getLogger(__name__)
+    18	
+    19	_redis: Redis | None = None
+    20	
+    21	
+    22	def _client() -> Redis | None:
+    23	    global _redis
+    24	    if _redis is None:
+    25	        try:
+    26	            _redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    27	        except Exception as e:
+    28	            log.warning("Rate-limit Redis init failed: %s", e)
+    29	            return None
+    30	    return _redis
+    31	
+    32	
+    33	def client_ip(request: Request) -> str:
+    34	    """Best-effort client IP. Trust the first hop from X-Forwarded-For when set
+    35	    by our edge (Vercel proxy / Railway router), else fall back to the socket."""
+    36	    fwd = request.headers.get("x-forwarded-for", "")
+    37	    if fwd:
+    38	        # left-most entry is the original client per RFC 7239
+    39	        return fwd.split(",")[0].strip()
+    40	    if request.client:
+    41	        return request.client.host
+    42	    return "unknown"
+    43	
+    44	
+    45	async def enforce(
+    46	    request: Request,
+    47	    *,
+    48	    bucket: str,
+    49	    limit: int,
+    50	    window_seconds: int,
+    51	    key_suffix: str = "",
+    52	    by_ip: bool = True,
+    53	) -> None:
+    54	    """Throw 429 if more than `limit` requests in `window_seconds`.
+    55	
+    56	    Args:
+    57	        bucket: short identifier of the protected route, e.g. "signup".
+    58	        limit: max requests per window.
+    59	        window_seconds: window length.
+    60	        key_suffix: optional extra discriminator (e.g. lowercased email) so the
+    61	            same IP using different emails still gets independent counters.
+    62	        by_ip: when True (default), bucket per client IP. Set False to bucket
+    63	            globally on (bucket, key_suffix) — useful when edge proxies rotate
+    64	            client IPs, or when you want to throttle by email-domain alone.
+    65	
+    66	    Side effect: stashes the latest (limit, remaining, reset_in) onto
+    67	    `request.state.rate_limit_headers` so the response middleware can
+    68	    surface X-RateLimit-* headers — Stripe-style ergonomics.
+    69	    """
+    70	    r = _client()
+    71	    if r is None:
+    72	        # fail-open: better to allow than 500. Skip header surfacing too.
+    73	        return
+    74	
+    75	    parts = ["rl", bucket]
+    76	    if by_ip:
+    77	        parts.append(client_ip(request))
+    78	    if key_suffix:
+    79	        parts.append(key_suffix)
+    80	    key = ":".join(parts)
+    81	    try:
+    82	        count = await r.incr(key)
+    83	        if count == 1:
+    84	            await r.expire(key, window_seconds)
+    85	        ttl_raw = await r.ttl(key)
+    86	        ttl = window_seconds if (ttl_raw is None or ttl_raw < 0) else ttl_raw
+    87	        remaining = max(0, limit - count)
+    88	
+    89	        # Stash for response middleware. Last-bucket-checked wins; if a
+    90	        # handler enforces several buckets, the tightest is most useful —
+    91	        # callers should call the most-restrictive bucket LAST.
+    92	        request.state.rate_limit_headers = {
+    93	            "X-RateLimit-Limit": str(limit),
+    94	            "X-RateLimit-Remaining": str(remaining),
+    95	            "X-RateLimit-Reset": str(ttl),
+    96	            "X-RateLimit-Bucket": bucket,
+    97	        }
+    98	
+    99	        if count > limit:
+   100	            raise HTTPException(
+   101	                status_code=429,
+   102	                detail=(
+   103	                    f"Rate limit exceeded for {bucket}. "
+   104	                    f"Try again in {ttl} seconds."
+   105	                ),
+   106	                headers={
+   107	                    "Retry-After": str(ttl),
+   108	                    "X-RateLimit-Limit": str(limit),
+   109	                    "X-RateLimit-Remaining": "0",
+   110	                    "X-RateLimit-Reset": str(ttl),
+   111	                    "X-RateLimit-Bucket": bucket,
+   112	                },
+   113	            )
+   114	    except HTTPException:
+   115	        raise
+   116	    except Exception as e:
+   117	        # any other Redis hiccup → fail-open
+   118	        log.warning("Rate-limit check failed (fail-open): %s", e)
+   119	        return
+     1	from contextlib import asynccontextmanager
+     2	
+     3	from fastapi import FastAPI
+     4	from fastapi.middleware.cors import CORSMiddleware
+     5	
+     6	from app.config import settings
+     7	from app.logging_setup import RequestContextMiddleware, configure_logging
+     8	from app.routers import (
+     9	    admin,
+    10	    approvals,
+    11	    approver_contacts,
+    12	    audit,
+    13	    billing,
+    14	    status_history,
+    15	    tenants,
+    16	    twilio_webhooks,
+    17	    webhooks,
+    18	)
+    19	from app.services.decision_bus import bus
+    20	
+    21	# Configure structured (JSON) logging first so anything below logs as JSON.
+    22	configure_logging(level="INFO")
+    23	
+    24	# Initialize Sentry as early as possible so import-time errors are captured too.
+    25	if settings.SENTRY_DSN:
+    26	    import sentry_sdk
+    27	    sentry_sdk.init(
+    28	        dsn=settings.SENTRY_DSN,
+    29	        environment=settings.SENTRY_ENVIRONMENT,
+    30	        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+    31	        send_default_pii=False,  # never send phone/email/approval payloads
+    32	        max_breadcrumbs=50,
+    33	    )
+    34	
+    35	
+    36	@asynccontextmanager
+    37	async def lifespan(app: FastAPI):
+    38	    await bus.start()
+    39	    try:
+    40	        yield
+    41	    finally:
+    42	        await bus.stop()
+    43	
+    44	
+    45	app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
+    46	
+    47	# Request context — stamps request_id + method + route on every log line,
+    48	# emits a structured "request.completed" record. Must be added BEFORE the
+    49	# CORS middleware so it wraps the inner handler chain.
+    50	app.add_middleware(RequestContextMiddleware)
+    51	
+    52	app.add_middleware(
+    53	    CORSMiddleware,
+    54	    allow_origins=[
+    55	        "https://pauseapi.app",
+    56	        "https://app.pauseapi.app",
+    57	        "http://localhost:3000",
+    58	    ],
+    59	    allow_methods=["*"],
+    60	    allow_headers=["*"],
+    61	    allow_credentials=True,
+    62	)
+    63	
+    64	app.include_router(tenants.router, prefix="/v1/tenants", tags=["tenants"])
+    65	app.include_router(approvals.router, prefix="/v1/approvals", tags=["approvals"])
+    66	app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tags=["approver-contacts"])
+    67	app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
+    68	app.include_router(twilio_webhooks.router)
+    69	app.include_router(webhooks.router, prefix="/v1/webhooks", tags=["webhooks"])
+    70	app.include_router(status_history.router, prefix="/v1/status", tags=["status"])
+    71	app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
+    72	app.include_router(admin.router, prefix="/v1", tags=["admin"])
+    73	
+    74	
+    75	@app.get("/health")
+    76	async def health():
+    77	    return {"status": "ok", "bus": bus._started}
+     1	from pydantic_settings import BaseSettings, SettingsConfigDict
+     2	
+     3	
+     4	class Settings(BaseSettings):
+     5	    DATABASE_URL: str = "postgresql+asyncpg://[REDACTED]@localhost:5432/sentinel"
+     6	    # Optional Postgres read replica. When empty (default), read-only endpoints
+     7	    # fall back to the primary engine — behaviour is identical to having no
+     8	    # replica. When set, read sessions target this URL. See
+     9	    # docs/runbooks/postgres-read-replica.md for provisioning.
+    10	    READ_REPLICA_URL: str = ""
+    11	    REDIS_URL: str = "redis://localhost:6379/0"
+    12	    JWT_SECRET: str = "change-me"
+    13	    TWILIO_ACCOUNT_SID: str = ""
+    14	    TWILIO_AUTH_TOKEN: str = ""
+    15	    TWILIO_FROM_NUMBER: str = ""
+    16	    TWILIO_MESSAGING_SERVICE_SID: str = ""
+    17	    RESEND_API_KEY: str = ""
+    18	    EMAIL_FROM: str = ""
+    19	    EMAIL_REPLY_TO: str = ""
+    20	    PUBLIC_APP_URL: str = "https://app.pauseapi.app"
+    21	    PUBLIC_API_URL: str = "https://api.pauseapi.app"
+    22	    # Comma-separated list of approver strings (email or sms:+1...). Used when the
+    23	    # caller's `approvers` list is empty — so the system always has a fallback recipient.
+    24	    DEFAULT_APPROVERS: str = ""
+    25	
+    26	    ADMIN_TOKEN: str = ""
+    27	
+    28	    # Staleness threshold for an in-progress idempotency claim. New writes
+    29	    # atomically commit the claim, handler effects, and stored response, so a
+    30	    # crash rolls them all back. A committed _IN_PROGRESS row can only have an
+    31	    # indeterminate/legacy outcome; once older than this threshold it fails
+    32	    # closed with 409 instead of re-running a potentially completed write. Keep
+    33	    # this comfortably above the longest expected handler and brief poll window.
+    34	    IDEMPOTENCY_INPROGRESS_TTL_SECONDS: int = 30
+    35	
+    36	    # Stripe billing — keys come from Stripe dashboard. If empty, billing
+    37	    # endpoints return 503 (feature disabled).
+    38	    STRIPE_SECRET_KEY: str = ""
+    39	    STRIPE_WEBHOOK_SECRET: str = ""
+    40	    STRIPE_PRICE_PRO: str = ""  # price_... id of the Pro monthly plan
+    41	    STRIPE_SUCCESS_URL: str = "https://app.pauseapi.app/billing?status=success"
+    42	    STRIPE_CANCEL_URL: str = "https://app.pauseapi.app/billing?status=cancelled"
+    43	
+    44	    # RFC 3161 Time Stamping Authority endpoint (e.g. https://freetsa.org/tsr).
+    45	    # Empty (default) disables audit-event timestamping entirely.
+    46	    TSA_URL: str = ""
+    47	
+    48	    SENTRY_DSN: str = ""
+    49	    SENTRY_ENVIRONMENT: str = "production"
+    50	    SENTRY_TRACES_SAMPLE_RATE: float = 0.05
+    51	
+    52	    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    53	
+    54	    @property
+    55	    def default_approvers_list(self) -> list[str]:
+    56	        return [a.strip() for a in self.DEFAULT_APPROVERS.split(",") if a.strip()]
+    57	
+    58	
+    59	settings = Settings()

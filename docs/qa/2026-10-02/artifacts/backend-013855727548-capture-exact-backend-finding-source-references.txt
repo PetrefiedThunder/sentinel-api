@@ -1,0 +1,343 @@
+   139	
+   140	@router.post("/recover/exchange")
+   141	async def recover_exchange(
+   142	    payload: RecoverExchange, db: AsyncSession = Depends(get_db)
+   143	):
+   144	    """Step 2: dashboard POSTs the token from the magic link. We revoke all
+   145	    existing keys and issue a brand-new one. The new key is returned ONCE."""
+   146	    try:
+   147	        tenant_id = verify_token(payload.token, expected_purpose="recover")
+   148	    except InvalidOnboardingToken as e:
+   149	        raise HTTPException(400, f"Invalid or expired recovery link: {e}") from e
+   150	
+   151	    tenant = await db.get(Tenant, tenant_id)
+   152	    if tenant is None:
+   153	        raise HTTPException(404, "Workspace not found")
+   154	
+   155	    # revoke every active key on this tenant
+   156	    now = datetime.utcnow()
+   157	    existing = await db.execute(
+   158	        select(ApiKey).where(ApiKey.tenant_id == tenant.id, ApiKey.revoked_at.is_(None))
+   159	    )
+   160	    for k in existing.scalars():
+   161	        k.revoked_at = now
+   162	
+   163	    # issue a new key
+   164	    raw, prefix, key_hash = generate_api_key()
+   165	    db.add(
+   166	        ApiKey(
+   167	            tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="recovery"
+   168	        )
+   169	    )
+   170	    await db.commit()
+   171	    return {"tenant_id": tenant.id, "api_key": raw}
+   172	
+    19	log = logging.getLogger(__name__)
+    20	
+    21	
+    22	# ── HMAC token (purpose-scoped) ──────────────────────────────────────
+    23	def _sign(payload_part: str) -> str:
+    24	    digest = hmac.new(
+    25	        settings.JWT_SECRET.encode(),
+    26	        payload_part.encode(),
+    27	        hashlib.sha256,
+    28	    ).digest()
+    29	    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    30	
+    31	
+    32	def _b64e(b: bytes) -> str:
+    33	    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+    34	
+    35	
+    36	def _b64d(s: str) -> bytes:
+    37	    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    38	
+    39	
+    40	class InvalidOnboardingToken(ValueError):
+    41	    pass
+    42	
+    43	
+    44	def create_token(purpose: str, subject: str, ttl_seconds: int) -> str:
+    45	    """Signed token: base64(json({purpose, sub, exp})) + '.' + sig."""
+    46	    payload = {
+    47	        "p": purpose,           # "verify" | "recover"
+    48	        "sub": subject,         # tenant.id
+    49	        "exp": int(time.time()) + int(ttl_seconds),
+    50	    }
+    51	    payload_part = _b64e(
+    52	        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    53	    )
+    54	    return f"{payload_part}.{_sign(payload_part)}"
+    55	
+    56	
+    57	def verify_token(token: str, expected_purpose: str) -> str:
+    58	    """Return subject (tenant_id) if the token is valid for `expected_purpose`."""
+    59	    try:
+    60	        payload_part, signature_part = token.split(".", 1)
+    61	    except ValueError as e:
+    62	        raise InvalidOnboardingToken("Malformed token") from e
+    63	    if not hmac.compare_digest(_sign(payload_part), signature_part):
+    64	        raise InvalidOnboardingToken("Invalid signature")
+    65	    try:
+    66	        payload = json.loads(_b64d(payload_part))
+    67	    except (ValueError, TypeError) as e:
+    68	        raise InvalidOnboardingToken("Malformed payload") from e
+    69	    if payload.get("p") != expected_purpose:
+    70	        raise InvalidOnboardingToken("Wrong purpose")
+    71	    if int(payload.get("exp", 0)) < int(time.time()):
+    72	        raise InvalidOnboardingToken("Expired")
+    73	    sub = payload.get("sub")
+    17	async def _verified_form(request: Request):
+    18	    form = await request.form()
+    19	    params = {key: str(value) for key, value in form.items()}
+    20	    signature = request.headers.get("X-Twilio-Signature", "")
+    21	    if settings.TWILIO_AUTH_TOKEN:
+    22	        validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+    23	        validation_url = f"{settings.PUBLIC_API_URL.rstrip('/')}{request.url.path}"
+    24	        if request.url.query:
+    25	            validation_url = f"{validation_url}?{request.url.query}"
+    26	        if not validator.validate(validation_url, params, signature):
+    27	            raise HTTPException(401, "Invalid Twilio signature")
+    28	    return params
+    29	
+    70	    action = None
+    71	    if keyword in STOP_WORDS:
+    72	        status = REVOKED
+    73	        action = "opt_out"
+    74	    elif keyword in START_WORDS:
+    75	        status = ACTIVE
+    76	        action = "opt_in"
+    77	    if status:
+    78	        contacts = await set_sms_contact_status_by_phone(db, sender, status, "twilio_inbound")
+    79	        for contact in contacts:
+    80	            await append_audit_event(
+    81	                db,
+    82	                contact.tenant_id,
+    83	                None,
+    84	                f"notification:sms:{action}",
+    85	                None,
+    63	    db: AsyncSession = Depends(get_db),
+    64	    tenant: Tenant = Depends(get_current_tenant),
+    65	    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    66	):
+    67	    """Create an approval. Pass `Idempotency-Key: <opaque>` to make retries
+    68	    safe — the same key replays the original response without firing
+    69	    duplicate emails or creating duplicate rows."""
+    70	
+    71	    async def _do_create() -> dict:
+    72	        for approver in payload.approvers:
+    73	            phone = sms_approver_phone(approver)
+    74	            if phone and not await find_active_sms_contact(db, tenant.id, phone):
+    75	                raise HTTPException(
+    76	                    400, "SMS approver requires active SMS consent contact"
+    77	                )
+    78	        approval = await create_approval(
+    79	            db, tenant, payload, background_tasks=background_tasks
+    80	        )
+    81	        return {
+    82	            "action_id": approval.id,
+    83	            "status": approval.decision,
+    84	            **_serialize(approval),
+   218	@router.post("/{action_id}/token-decision")
+   219	async def decide_with_token(
+   220	    action_id: str,
+   221	    payload: TokenDecisionRequest,
+   222	    db: AsyncSession = Depends(get_db),
+   223	):
+   224	    try:
+   225	        decision = verify_decision_token(payload.token, action_id)
+   226	    except (InvalidApprovalToken, ValueError):
+   227	        raise HTTPException(401, "Invalid or expired approval token") from None
+   228	
+   229	    # Replay protection: each token is single-use, tracked server-side
+     8	def _resolve_approvers(caller_approvers: list, tenant) -> list:
+     9	    """If caller specified approvers, use them. Otherwise fall back first to
+    10	    the tenant's saved `default_approvers`, then to the global env-var
+    11	    `DEFAULT_APPROVERS`. Raises 400 if all three are empty."""
+    12	    if caller_approvers:
+    13	        return caller_approvers
+    14	    tenant_defaults = list(tenant.default_approvers or [])
+    15	    if tenant_defaults:
+    16	        return tenant_defaults
+    17	    global_defaults = settings.default_approvers_list
+    18	    if global_defaults:
+    19	        return global_defaults
+    20	    raise HTTPException(
+    21	        400,
+    22	        "approvers must be a non-empty list. Either pass `approvers` in the "
+    32	            "notifications cannot run before the approval transaction commits"
+    33	        )
+    34	    resolved_approvers = _resolve_approvers(payload.approvers, tenant)
+    35	    approval = Approval(
+    36	        tenant_id=tenant.id,
+    37	        function_name=payload.function_name,
+    38	        arguments=payload.arguments,
+    39	        risk_level=payload.risk_level,
+    40	        approvers=resolved_approvers,
+    41	        timeout_seconds=payload.timeout_seconds,
+    42	    )
+    43	    db.add(approval)
+    44	    # Keep the approval in the caller's transaction. The approvals route wraps
+    45	    # this write in run_with_idempotency(), which commits the Approval and the
+   171	        buf.seek(0)
+   172	        buf.truncate(0)
+   173	
+   174	        for e in rows:
+   175	            writer.writerow(
+   176	                [
+   177	                    e.id,
+   178	                    e.action_id,
+   179	                    e.created_at.isoformat() if e.created_at else "",
+   180	                    json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
+   181	                    e.error or "",
+   182	                    e.prev_hash or "",
+   183	                    e.event_hash or "",
+   184	                ]
+   185	            )
+   186	            yield buf.getvalue()
+   187	            buf.seek(0)
+   110	@pytest.mark.parametrize(
+   111	    ("method", "path", "payload"),
+   112	    [
+   113	        ("GET", "/v1/approvals/act_qa_owner", None),
+   114	        ("GET", "/v1/approvals/act_qa_owner/wait?timeout=1", None),
+   115	        ("POST", "/v1/approvals/act_qa_owner/decision",
+   116	         {"decision": "approved", "decided_by": "qa"}),
+   117	        ("POST", "/v1/audit-events",
+   118	         {"action_id": "act_qa_owner", "execution_result": "qa"}),
+   119	        ("DELETE", "/v1/webhooks/whk_qa_owner", None),
+   120	    ],
+   121	)
+   122	async def test_auth_permissions_matrix_preserves_foreign_state(qa_api, identity, method, path, payload):
+   123	    headers = {} if identity == "missing" else (
+   124	        {"Authorization": "Bearer [REDACTED]"} if identity == "invalid"
+   125	        else bearer(qa_api, identity)
+   126	    )
+   127	    response = await qa_api.client.request(method, path, json=payload, headers=headers)
+   128	    expected = 404 if identity == "other" else (422 if identity == "missing" else 401)
+   129	    assert response.status_code == expected
+   130	    async with qa_api.sessions() as session:
+   131	        assert (await session.get(Approval, "act_qa_owner")).decision == "pending"
+   132	        assert (await session.get(WebhookEndpoint, "whk_qa_owner")).disabled_at is None
+   133	        assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 0
+   134	
+   135	
+   136	async def test_same_idempotency_key_is_isolated_between_real_authenticated_tenants(qa_api):
+   137	    payload = {"function_name": "qa_action", "approvers": ["qa@example.invalid"]}
+   138	    responses = []
+   139	    for name in ("owner", "other"):
+   140	        headers = {**bearer(qa_api, name), "Idempotency-Key": "qa-shared-key"}
+   141	        first = await qa_api.client.post("/v1/approvals", json=payload, headers=headers)
+   142	        replay = await qa_api.client.post("/v1/approvals", json=payload, headers=headers)
+   143	        assert first.status_code == replay.status_code == 200
+   144	        assert first.json() == replay.json()
+   145	        assert first.json()["tenant_id"] == f"ten_qa_{name}"
+   146	        responses.append(first.json())
+   147	    assert responses[0]["id"] != responses[1]["id"]
+   148	
+   149	
+   150	@pytest.mark.xfail(strict=True, reason="BE-001: recovery token can rotate keys repeatedly")
+   151	async def test_recovery_token_is_single_use_and_preserves_first_recovered_key(qa_api):
+   152	    token = onboarding.create_token("recover", "ten_qa_owner", ttl_seconds=300)
+   153	    first = await qa_api.client.post("/v1/tenants/recover/exchange", json={"token": token})
+   154	    assert first.status_code == 200
+   155	    recovered_hash = hash_key(first.json()["api_key"])
+   156	    replay = await qa_api.client.post("/v1/tenants/recover/exchange", json={"token": token})
+   157	    async with qa_api.sessions() as session:
+   158	        recovered = await session.scalar(select(ApiKey).where(ApiKey.key_hash == recovered_hash))
+   159	        unchanged = recovered.revoked_at is None
+   160	    assert (replay.status_code in (400, 401, 409), unchanged) == (True, True)
+   161	
+   162	
+   163	@pytest.mark.xfail(strict=True, reason="BE-002: onboarding accepts the known weak signing default")
+   164	def test_onboarding_rejects_weak_signing_configuration(monkeypatch):
+   165	    # Exercise the actual configured default without printing or minting a token.
+   166	    weak_default = type(settings).model_fields["JWT_SECRET"].default
+   167	    monkeypatch.setattr(settings, "JWT_SECRET", weak_default)
+   168	    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+   169	        onboarding._sign("qa-non-token-payload")
+   170	
+   171	
+   172	@pytest.mark.parametrize("url", ["http://127.0.0.1/hook", "http://10.0.0.1/hook", "http://[::1]/hook"])
+   173	@pytest.mark.xfail(strict=True, reason="BE-003: private webhook targets are accepted without an egress guard")
+   174	async def test_webhook_registration_rejects_private_network_targets(qa_api, url):
+   175	    # Registration alone has no outbound request. Never resolve or call the URL.
+   176	    response = await qa_api.client.post("/v1/webhooks", json={"url": url}, headers=bearer(qa_api))
+   177	    assert response.status_code in (400, 422)
+   178	
+   179	
+   180	@pytest.mark.parametrize(
+   181	    "path", ["/v1/approvals/act_qa_owner/token-decision",
+   182	             "/v1/tenants/recover/exchange", "/v1/tenants/verify-email"],
+   183	)
+   184	@pytest.mark.parametrize("token", ["", "without-dot", "payload.bad-signature"])
+   185	async def test_malformed_ascii_token_classes_fail_closed(qa_api, path, token):
+   186	    response = await qa_api.client.post(path, json={"token": token})
+   187	    assert response.status_code in (400, 401)
+   188	
+   189	
+   190	@pytest.mark.parametrize(
+   191	    "path", ["/v1/approvals/act_qa_owner/token-decision",
+   192	             "/v1/tenants/recover/exchange", "/v1/tenants/verify-email"],
+   193	)
+   194	@pytest.mark.xfail(strict=True, reason="BE-004: non-ASCII token signatures produce HTTP 500")
+   195	async def test_unicode_token_signature_is_a_client_error(qa_api, path):
+   196	    response = await qa_api.client.post(path, json={"token": "invalid.\N{SNOWMAN}"})
+   197	    assert response.status_code in (400, 401)
+   198	
+   199	
+   200	@pytest.mark.xfail(strict=True, reason="BE-005: recovery emits a live key prefix for a test workspace")
+   201	async def test_recovered_key_keeps_test_workspace_mode(qa_api):
+   202	    token = onboarding.create_token("recover", "ten_qa_owner", ttl_seconds=300)
+   203	    response = await qa_api.client.post("/v1/tenants/recover/exchange", json={"token": token})
+   204	    assert response.status_code == 200
+   205	    has_test_prefix = response.json()["api_key"].startswith("sk_test_")
+   206	    assert has_test_prefix
+   207	
+   208	
+   209	@pytest.mark.xfail(strict=True, reason="BE-006: fallback SMS approvers skip create-time consent validation")
+   210	async def test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver(qa_api):
+   211	    destination = "sms:+15551234567"
+   212	    payload = {"function_name": "qa_action", "approvers": [destination]}
+   213	    explicit = await qa_api.client.post("/v1/approvals", json=payload, headers=bearer(qa_api))
+   214	    assert explicit.status_code == 400
+   215	    settings_response = await qa_api.client.patch(
+   216	        "/v1/tenants/me", json={"default_approvers": [destination]}, headers=bearer(qa_api)
+   217	    )
+   218	    assert settings_response.status_code == 200
+   219	    fallback = await qa_api.client.post(
+   220	        "/v1/approvals", json={"function_name": "qa_action"}, headers=bearer(qa_api)
+   221	    )
+   222	    assert fallback.status_code == 400
+   223	
+   224	
+   225	@pytest.mark.parametrize(
+   226	    "configured",
+   227	    [True, pytest.param(False, marks=pytest.mark.xfail(
+   228	        strict=True, reason="BE-007: absent Twilio auth configuration accepts unsigned mutations"
+   229	    ))],
+   230	)
+   231	async def test_unsigned_twilio_callback_cannot_change_multiple_tenants(qa_api, monkeypatch, configured):
+   232	    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", secrets.token_hex(32) if configured else "")
+   233	    response = await qa_api.client.post(
+   234	        "/webhooks/twilio/inbound", data={"From": "+15551230000", "Body": "STOP"}
+   235	    )
+   236	    async with qa_api.sessions() as session:
+   237	        contacts = (await session.scalars(select(ApproverContact))).all()
+   238	        unchanged = all(contact.consent_status == "active" for contact in contacts)
+   239	    assert (response.status_code in (401, 503), unchanged) == (True, True)
+   240	
+   241	
+   242	@pytest.mark.xfail(strict=True, reason="BE-008: audit CSV exports untrusted formula cells unchanged")
+   243	async def test_audit_csv_neutralizes_spreadsheet_formula_cells(qa_api):
+   244	    response = await qa_api.client.post(
+   245	        "/v1/audit-events",
+   246	        json={"action_id": "act_qa_owner", "execution_result": "failed", "error": "=1+1"},
+   247	        headers=bearer(qa_api),
+   248	    )
+   249	    assert response.status_code == 200
+   250	    exported = await qa_api.client.get("/v1/audit-events.csv", headers=bearer(qa_api))
+   251	    assert exported.status_code == 200
+   252	    rows = list(csv.DictReader(io.StringIO(exported.text)))
+   253	    assert len(rows) == 1
+   254	    assert rows[0]["error"].startswith("'=")

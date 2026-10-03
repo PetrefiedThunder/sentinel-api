@@ -1,0 +1,84 @@
+{
+  "started_utc": "2026-10-03T01:40:41.575Z",
+  "ended_utc": "2026-10-03T01:40:45.527Z",
+  "browsers": [
+    {
+      "name": "chromium",
+      "browserVersion": "153.0.8010.12",
+      "httpStatus": 200,
+      "title": "Sentinel API - Swagger UI",
+      "operationCount": 29,
+      "errors": [],
+      "mobileOverflow": {
+        "width": 375,
+        "content": 375
+      },
+      "keyboardExpandsOperation": true,
+      "loadingText": "",
+      "errorText": "Failed to load API definition.\nErrors\nHide\n \nFetch error\nService Unavailable /openapi.json\n ",
+      "emptyText": "Sentinel API\n QA empty state \nOAS 3.1\n/openapi.json\nNo operations defined in spec!",
+      "errorAlerts": 0,
+      "focusOutline": {
+        "style": "auto",
+        "width": "3px"
+      },
+      "axeViolations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 46
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1
+        },
+        {
+          "id": "html-has-lang",
+          "impact": "serious",
+          "nodes": 1
+        },
+        {
+          "id": "nested-interactive",
+          "impact": "serious",
+          "nodes": 29
+        },
+        {
+          "id": "region",
+          "impact": "moderate",
+          "nodes": 1
+        },
+        {
+          "id": "target-size",
+          "impact": "serious",
+          "nodes": 29
+        }
+      ],
+      "axeIncomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": 29
+        }
+      ]
+    },
+    {
+      "name": "firefox",
+      "browserVersion": "155.0",
+      "httpStatus": 200,
+      "title": "Sentinel API - Swagger UI",
+      "operationCount": 29,
+      "errors": []
+    },
+    {
+      "name": "webkit",
+      "browserVersion": "26.6",
+      "httpStatus": 200,
+      "title": "Sentinel API - Swagger UI",
+      "operationCount": 29,
+      "errors": []
+    }
+  ],
+  "playwright": "1.63.0",
+  "axe-core": "4.13.0",
+  "swagger-ui-dist": "5.33.1"
+}

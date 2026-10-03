@@ -1,0 +1,124 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sentinel-api"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sqlalchemy>=2.0",
+    "greenlet>=3.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "twilio>=9.0",
+    "sentry-sdk[fastapi]>=2.0",
+    "structlog>=24.4",
+    "asn1crypto>=1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "aiosqlite>=0.20",
+    "ruff>=0.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["dist", "build", ".venv", "alembic/versions"]
+
+[tool.ruff.lint]
+# TCH omitted: FastAPI resolves endpoint annotations at runtime, so moving
+# imports like AsyncSession into TYPE_CHECKING blocks breaks Depends().
+select = ["E", "F", "W", "I", "B", "C4", "UP", "SIM"]
+ignore = [
+    "E501",  # formatter handles line length
+    "B008",  # FastAPI Depends() in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+"alembic/env.py" = ["E402"]  # alembic imports after sys.path manipulation
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+# Gate raised to 70 in QA-COVERAGE-70 (measured ~80% at the time).
+fail_under = 70
+tests/test_routes.py:4:def test_slack_routes_are_not_registered():
+app/auth.py:12:def hash_key(raw: str) -> str:
+app/auth.py:16:def generate_api_key(mode: str = "live") -> tuple[str, str, str]:
+app/auth.py:28:async def get_current_tenant(
+ARCHITECTURE.md:1:# Sentinel — system architecture
+ARCHITECTURE.md:5:## At a glance
+ARCHITECTURE.md:58:## Repository roles
+ARCHITECTURE.md:69:## Approval lifecycle
+ARCHITECTURE.md:91:## Key invariants
+ARCHITECTURE.md:100:## Hosting topology
+ARCHITECTURE.md:110:## Data flows
+ARCHITECTURE.md:112:### Approval creation (write-heavy path)
+ARCHITECTURE.md:123:### Decision propagation (latency-critical)
+ARCHITECTURE.md:135:### Webhook fan-out (async, retryable)
+ARCHITECTURE.md:149:## Multi-tenancy model
+ARCHITECTURE.md:156:## Deploy topology
+ARCHITECTURE.md:169:## What we don't have yet (intentional)
+ARCHITECTURE.md:176:## Future architectural moves
+app/db.py:7:class Base(DeclarativeBase):
+app/db.py:11:def _normalize_async_url(url: str) -> str:
+app/db.py:26:# Optional read replica. If READ_REPLICA_URL is set we build a second engine +
+app/db.py:27:# sessionmaker pointed at the replica; otherwise reads reuse the primary engine
+app/db.py:28:# so behaviour is identical to having no replica configured.
+app/db.py:39:async def get_db():
+app/db.py:44:async def get_read_session():
+app/config.py:4:class Settings(BaseSettings):
+app/main.py:21:# Configure structured (JSON) logging first so anything below logs as JSON.
+app/main.py:24:# Initialize Sentry as early as possible so import-time errors are captured too.
+app/main.py:36:@asynccontextmanager
+app/main.py:37:async def lifespan(app: FastAPI):
+app/main.py:47:# Request context — stamps request_id + method + route on every log line,
+app/main.py:48:# emits a structured "request.completed" record. Must be added BEFORE the
+app/main.py:49:# CORS middleware so it wraps the inner handler chain.
+app/main.py:75:@app.get("/health")
+app/main.py:76:async def health():
+README.md:1:# Sentinel API
+README.md:13:## Current release status
+README.md:24:## What it does
+README.md:34:## Trust and responsibility boundary
+README.md:56:## Architecture
+README.md:61:## Run locally
+README.md:96:## Create a local test approval
+README.md:138:## Configuration
+README.md:169:## Public API
+README.md:192:### Downstream consumer contract
+README.md:201:## Tests and checks
+README.md:222:## Migration policy
+README.md:229:## Deployment
+README.md:240:## Security
+README.md:245:## License
+/Users/sellers/.local/bin/uv
+/Library/Frameworks/Python.framework/Versions/3.12/bin/ruff
+/opt/homebrew/bin/gitleaks

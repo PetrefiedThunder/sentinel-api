@@ -1,0 +1,384 @@
+tests/test_qa_backend.py:31:    monkeypatch.setattr(settings, "JWT_SECRET", secrets.token_hex(32))
+tests/test_qa_backend.py:64:                    destination_last4="0000", consent_status="active", consent_source="qa",
+tests/test_qa_backend.py:163:@pytest.mark.xfail(strict=True, reason="BE-002: onboarding accepts the known weak signing default")
+tests/test_qa_backend.py:164:def test_onboarding_rejects_weak_signing_configuration(monkeypatch):
+tests/test_qa_backend.py:166:    weak_default = type(settings).model_fields["JWT_SECRET"].default
+tests/test_qa_backend.py:167:    monkeypatch.setattr(settings, "JWT_SECRET", weak_default)
+tests/test_qa_backend.py:168:    with pytest.raises(RuntimeError, match="JWT_SECRET"):
+tests/test_qa_backend.py:209:@pytest.mark.xfail(strict=True, reason="BE-006: fallback SMS approvers skip create-time consent validation")
+tests/test_qa_backend.py:210:async def test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver(qa_api):
+tests/test_qa_backend.py:238:        unchanged = all(contact.consent_status == "active" for contact in contacts)
+app/services/notifications.py:113:                        logger.warning("sms notify skipped: no active consent contact for %s", normalized_recipient[-4:])
+app/services/notifications.py:171:        expires_in_seconds=approval.timeout_seconds,
+app/routers/approvals.py:19:from app.services.nonce_store import is_nonce_consumed, mark_nonce_consumed, token_nonce
+app/routers/approvals.py:49:        "timeout_seconds": a.timeout_seconds,
+app/routers/approvals.py:76:                    400, "SMS approver requires active SMS consent contact"
+app/routers/approvals.py:231:    nonce = token_nonce(payload.token)
+app/routers/approvals.py:233:        if await is_nonce_consumed(db, nonce):
+app/routers/approvals.py:246:        if await is_nonce_consumed(db, nonce):
+app/routers/approvals.py:255:        mark_nonce_consumed(db, nonce, action_id)
+app/routers/approvals.py:262:        # Audit failures are not necessarily nonce conflicts. Check the exact
+app/routers/approvals.py:263:        # nonce after rollback before translating a constraint error to 409.
+app/routers/approvals.py:265:            consumed = await is_nonce_consumed(db, nonce)
+app/routers/approvals.py:272:        if consumed:
+app/services/approval_service.py:41:        timeout_seconds=payload.timeout_seconds,
+app/services/approval_service.py:59:        "timeout_seconds": approval.timeout_seconds,
+app/services/approval_tokens.py:75:    _require_strong_signing_secret()
+app/services/approval_tokens.py:77:        settings.JWT_SECRET.encode(),
+app/services/approval_tokens.py:93:def _require_strong_signing_secret() -> None:
+app/services/approval_tokens.py:94:    secret = settings.JWT_SECRET
+app/services/approval_tokens.py:96:        raise RuntimeError("JWT_SECRET must be a strong random value for approval links")
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sentinel-api"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sqlalchemy>=2.0",
+    "greenlet>=3.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "twilio>=9.0",
+    "sentry-sdk[fastapi]>=2.0",
+    "structlog>=24.4",
+    "asn1crypto>=1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "aiosqlite>=0.20",
+    "ruff>=0.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["dist", "build", ".venv", "alembic/versions"]
+
+[tool.ruff.lint]
+# TCH omitted: FastAPI resolves endpoint annotations at runtime, so moving
+# imports like AsyncSession into TYPE_CHECKING blocks breaks Depends().
+select = ["E", "F", "W", "I", "B", "C4", "UP", "SIM"]
+ignore = [
+    "E501",  # formatter handles line length
+    "B008",  # FastAPI Depends() in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+"alembic/env.py" = ["E402"]  # alembic imports after sys.path manipulation
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+# Gate raised to 70 in QA-COVERAGE-70 (measured ~80% at the time).
+fail_under = 70
+import base64
+import hashlib
+import hmac
+import json
+import time
+
+from app.config import settings
+
+VALID_DECISIONS = {"approved", "rejected"}
+WEAK_SIGNING_SECRETS = {
+    "",
+    "change-me",
+    "dev-only-replace",
+    "replace-with-rs256-key",
+    "replace-with-32-byte-random-secret",
+}
+
+
+class InvalidApprovalToken(ValueError):
+    pass
+
+
+def create_decision_token(
+    action_id: str,
+    decision: str,
+    expires_in_seconds: int,
+    now: int | None = None,
+) -> str:
+    if decision not in VALID_DECISIONS:
+        raise ValueError("decision must be 'approved' or 'rejected'")
+    issued_at = int(time.time() if now is None else now)
+    payload = {
+        "action_id": action_id,
+        "decision": decision,
+        "exp": issued_at + expires_in_seconds,
+    }
+    payload_part = _base64url_encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    )
+    signature_part = _sign(payload_part)
+    return f"{payload_part}.{signature_part}"
+
+
+def verify_decision_token(
+    token: str,
+    action_id: str,
+    now: int | None = None,
+) -> str:
+    try:
+        payload_part, signature_part = token.split(".", 1)
+    except ValueError as exc:
+        raise InvalidApprovalToken("Malformed approval token") from exc
+
+    expected_signature = _sign(payload_part)
+    if not hmac.compare_digest(expected_signature, signature_part):
+        raise InvalidApprovalToken("Invalid approval token signature")
+
+    try:
+        payload = json.loads(_base64url_decode(payload_part))
+    except (ValueError, TypeError) as exc:
+        raise InvalidApprovalToken("Malformed approval token payload") from exc
+
+    if payload.get("action_id") != action_id:
+        raise InvalidApprovalToken("Approval token action mismatch")
+    decision = payload.get("decision")
+    if decision not in VALID_DECISIONS:
+        raise InvalidApprovalToken("Invalid approval token decision")
+    current_time = int(time.time() if now is None else now)
+    if int(payload.get("exp", 0)) < current_time:
+        raise InvalidApprovalToken("Approval token expired")
+    return decision
+
+
+def _sign(payload_part: str) -> str:
+    _require_strong_signing_secret()
+    digest = hmac.new(
+        settings.JWT_SECRET.encode(),
+        payload_part.encode(),
+        hashlib.sha256,
+    ).digest()
+    return _base64url_encode(digest)
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _require_strong_signing_secret() -> None:
+    secret = settings.JWT_SECRET
+    if secret in WEAK_SIGNING_SECRETS or len(secret) < 32:
+        raise RuntimeError("JWT_SECRET must be a strong random value for approval links")
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.logging_setup import RequestContextMiddleware, configure_logging
+from app.routers import (
+    admin,
+    approvals,
+    approver_contacts,
+    audit,
+    billing,
+    status_history,
+    tenants,
+    twilio_webhooks,
+    webhooks,
+)
+from app.services.decision_bus import bus
+
+# Configure structured (JSON) logging first so anything below logs as JSON.
+configure_logging(level="INFO")
+
+# Initialize Sentry as early as possible so import-time errors are captured too.
+if settings.SENTRY_DSN:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.SENTRY_ENVIRONMENT,
+        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,  # never send phone/email/approval payloads
+        max_breadcrumbs=50,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await bus.start()
+    try:
+        yield
+    finally:
+        await bus.stop()
+
+
+app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
+
+# Request context — stamps request_id + method + route on every log line,
+# emits a structured "request.completed" record. Must be added BEFORE the
+# CORS middleware so it wraps the inner handler chain.
+app.add_middleware(RequestContextMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://pauseapi.app",
+        "https://app.pauseapi.app",
+        "http://localhost:3000",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
+
+app.include_router(tenants.router, prefix="/v1/tenants", tags=["tenants"])
+app.include_router(approvals.router, prefix="/v1/approvals", tags=["approvals"])
+app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tags=["approver-contacts"])
+app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
+app.include_router(twilio_webhooks.router)
+app.include_router(webhooks.router, prefix="/v1/webhooks", tags=["webhooks"])
+app.include_router(status_history.router, prefix="/v1/status", tags=["status"])
+app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
+app.include_router(admin.router, prefix="/v1", tags=["admin"])
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "bus": bus._started}
+import hashlib
+import secrets
+
+from fastapi import Depends, Header, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import get_db
+from app.models import ApiKey, Tenant
+
+
+def hash_key(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def generate_api_key(mode: str = "live") -> tuple[str, str, str]:
+    """Issue an API key. mode='live' → sk_live_…, mode='test' → sk_test_…
+
+    Test-mode keys are scoped to a test workspace whose approvals never fire
+    real emails/SMS — see services that gate on tenant.mode.
+    """
+    token_prefix = "sk_test_" if mode == "test" else "sk_live_"
+    raw = f"{token_prefix}{secrets.token_hex(32)}"
+    prefix = raw[:11]
+    return raw, prefix, hash_key(raw)
+
+
+async def get_current_tenant(
+    authorization: [REDACTED] = Header(...),
+    db: AsyncSession = Depends(get_db),
+) -> Tenant:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    raw_key = authorization.split(" ", 1)[1].strip()
+    key_hash = hash_key(raw_key)
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))
+    )
+    api_key = result.scalar_one_or_none()
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    tenant = await db.get(Tenant, api_key.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=401, detail="Tenant not found")
+    # Stamp tenant_id on every subsequent log line in this request
+    from app.logging_setup import bind_request_context
+    bind_request_context(tenant_id=tenant.id, api_key_id=api_key.id)
+    return tenant
+from fastapi import BackgroundTasks, HTTPException
+
+from app.config import settings
+from app.models import Approval
+from app.services.notifications import dispatch_approval_notifications
+
+
+def _resolve_approvers(caller_approvers: list, tenant) -> list:
+    """If caller specified approvers, use them. Otherwise fall back first to
+    the tenant's saved `default_approvers`, then to the global env-var
+    `DEFAULT_APPROVERS`. Raises 400 if all three are empty."""
+    if caller_approvers:
+        return caller_approvers
+    tenant_defaults = list(tenant.default_approvers or [])
+    if tenant_defaults:
+        return tenant_defaults
+    global_defaults = settings.default_approvers_list
+    if global_defaults:
+        return global_defaults
+    raise HTTPException(
+        400,
+        "approvers must be a non-empty list. Either pass `approvers` in the "
+        "request, or set tenant default_approvers via PATCH /v1/tenants/me, "
+        "or set DEFAULT_APPROVERS env on the server.",
+    )
+
+
+async def create_approval(db, tenant, payload, *, background_tasks: BackgroundTasks):
+    if background_tasks is None:
+        raise RuntimeError(
+            "create_approval requires request-scoped BackgroundTasks so "
+            "notifications cannot run before the approval transaction commits"
+        )
+    resolved_approvers = _resolve_approvers(payload.approvers, tenant)
+    approval = Approval(
+        tenant_id=tenant.id,
+        function_name=payload.function_name,
+        arguments=payload.arguments,
+        risk_level=payload.risk_level,
+        approvers=resolved_approvers,
+        timeout_seconds=payload.timeout_seconds,
+    )
+    db.add(approval)
+    # Keep the approval in the caller's transaction. The approvals route wraps
+    # this write in run_with_idempotency(), which commits the Approval and the
+    # completed IdempotencyKey response atomically. Committing here would leave
+    # a crash window where the approval exists but the claim still looks
+    # in-progress, allowing a stale retry to create a duplicate approval.
+    await db.flush()
+    await db.refresh(approval)
+    # Freeze a plain-data snapshot so background tasks don't touch a closed session.
+    snapshot = type("ApprovalSnapshot", (), {
+        "id": approval.id,
+        "tenant_id": approval.tenant_id,
+        "function_name": approval.function_name,
+        "arguments": approval.arguments,
+        "risk_level": approval.risk_level,
+        "approvers": list(approval.approvers or []),
+        "timeout_seconds": approval.timeout_seconds,
+    })()
+    background_tasks.add_task(dispatch_approval_notifications, snapshot, tenant)
+    return approval

@@ -1,0 +1,844 @@
+"""Onboarding emails — welcome, verify, recover.
+
+Uses the same HMAC-signed token primitive as approval magic links
+(see approval_tokens.py) so we share the same JWT_SECRET infra.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import time
+
+import httpx
+
+from app.config import settings
+
+log = logging.getLogger(__name__)
+
+
+# ── HMAC token (purpose-scoped) ──────────────────────────────────────
+def _sign(payload_part: str) -> str:
+    digest = hmac.new(
+        settings.JWT_SECRET.encode(),
+        payload_part.encode(),
+        hashlib.sha256,
+    ).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
+def _b64e(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+
+
+def _b64d(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+class InvalidOnboardingToken(ValueError):
+    pass
+
+
+def create_token(purpose: str, subject: str, ttl_seconds: int) -> str:
+    """Signed token: base64(json({purpose, sub, exp})) + '.' + sig."""
+    payload = {
+        "p": purpose,           # "verify" | "recover"
+        "sub": subject,         # tenant.id
+        "exp": int(time.time()) + int(ttl_seconds),
+    }
+    payload_part = _b64e(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    )
+    return f"{payload_part}.{_sign(payload_part)}"
+
+
+def verify_token(token: str, expected_purpose: str) -> str:
+    """Return subject (tenant_id) if the token is valid for `expected_purpose`."""
+    try:
+        payload_part, signature_part = token.split(".", 1)
+    except ValueError as e:
+        raise InvalidOnboardingToken("Malformed token") from e
+    if not hmac.compare_digest(_sign(payload_part), signature_part):
+        raise InvalidOnboardingToken("Invalid signature")
+    try:
+        payload = json.loads(_b64d(payload_part))
+    except (ValueError, TypeError) as e:
+        raise InvalidOnboardingToken("Malformed payload") from e
+    if payload.get("p") != expected_purpose:
+        raise InvalidOnboardingToken("Wrong purpose")
+    if int(payload.get("exp", 0)) < int(time.time()):
+        raise InvalidOnboardingToken("Expired")
+    sub = payload.get("sub")
+    if not sub or not isinstance(sub, str):
+        raise InvalidOnboardingToken("Missing subject")
+    return sub
+
+
+# ── URL builders ─────────────────────────────────────────────────────
+def _dashboard_origin() -> str:
+    return (settings.PUBLIC_APP_URL or "https://app.pauseapi.app").rstrip("/")
+
+
+def verify_url(token: str) -> str:
+    return f"{_dashboard_origin()}/verify?t={token}"
+
+
+def recover_url(token: str) -> str:
+    return f"{_dashboard_origin()}/recover?t={token}"
+
+
+# ── Resend send wrapper ──────────────────────────────────────────────
+async def _send(to: str, subject: str, html: str) -> None:
+    api_key = settings.RESEND_API_KEY
+    if not api_key:
+        log.warning("RESEND_API_KEY not set — skipping onboarding email to %s", to)
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": [REDACTED]"Bearer {api_key}"},
+                json={
+                    "from": settings.EMAIL_FROM or "Sentinel <approvals@pauseapi.app>",
+                    "reply_to": settings.EMAIL_REPLY_TO or "support@regengine.co",
+                    "to": [to],
+                    "subject": subject,
+                    "html": html,
+                },
+            )
+            if r.status_code >= 400:
+                log.warning("Resend onboarding send failed: %s %s", r.status_code, r.text[:200])
+    except Exception as e:
+        # best-effort — never crash the signup
+        log.exception("Onboarding email send error: %s", e)
+
+
+# ── Welcome + verify ─────────────────────────────────────────────────
+async def send_welcome_email(tenant, api_key: str) -> None:
+    """Single email containing: API key reminder + verify link + demo snippet."""
+    token = create_token("verify", tenant.id, ttl_seconds=60 * 60 * 24 * 7)  # 7 days
+    link = verify_url(token)
+    key_preview = f"{api_key[:14]}…{api_key[-6:]}"
+
+    snippet = f"""from sentinel import configure, oversight
+
+configure(api_key=\"{api_key}\")
+
+@oversight(risk_level=\"high\", approvers=[\"{tenant.email}\"])
+def wire_transfer(amount, recipient):
+    return {{\"ok\": True}}
+
+wire_transfer(50_000, \"acct_xyz\")"""
+
+    html = f"""
+    <h2>Welcome to Sentinel</h2>
+    <p>Hi {tenant.name},</p>
+    <p>Your workspace is live. Your API key was issued during signup
+       (preview: <code>{key_preview}</code>) — keep it safe; we don't store
+       it in plaintext on our end.</p>
+
+    <h3>Verify your email</h3>
+    <p>Click below within 7 days to mark your email verified. This unlocks
+       branded sender domains and access to paid plans.</p>
+    <p>
+      <a href="{link}"
+         style="display:inline-block;background:#0a0a0a;color:#fff;
+                padding:10px 16px;border-radius:6px;text-decoration:none;
+                font-family:system-ui,sans-serif;font-weight:600;">
+        Verify email →
+      </a>
+    </p>
+
+    <h3>2-minute test</h3>
+    <pre style="background:#f5f5f5;padding:12px;border-radius:6px;
+                font-family:Menlo,Consolas,monospace;font-size:13px;
+                overflow-x:auto;line-height:1.5;">{snippet}</pre>
+
+    <p>
+      <a href="https://github.com/PetrefiedThunder/sentinel-examples">Examples repo</a>
+      &middot;
+      <a href="https://github.com/PetrefiedThunder/sentinel-sdk#readme">SDK docs</a>
+      &middot;
+      <a href="https://app.pauseapi.app">Dashboard</a>
+    </p>
+
+    <p style="color:#888;font-size:12px;margin-top:24px;">
+      — RegEngine, Inc. &middot;
+      <a href="https://pauseapi.app/privacy">Privacy</a> &middot;
+      <a href="https://pauseapi.app/terms">Terms</a>
+    </p>
+    """
+    await _send(tenant.email, "Welcome to Sentinel — verify your email", html)
+
+
+# ── Recovery email (rotate API key) ──────────────────────────────────
+async def send_recovery_email(tenant) -> None:
+    token = create_token("recover", tenant.id, ttl_seconds=60 * 30)  # 30 min
+    link = recover_url(token)
+    html = f"""
+    <h2>Rotate your Sentinel API key</h2>
+    <p>Someone (hopefully you) asked us to issue a fresh API key for the
+       Sentinel workspace registered to this email.</p>
+    <p>
+      <a href="{link}"
+         style="display:inline-block;background:#0a0a0a;color:#fff;
+                padding:10px 16px;border-radius:6px;text-decoration:none;
+                font-family:system-ui,sans-serif;font-weight:600;">
+        Issue new API key →
+      </a>
+    </p>
+    <p>Clicking the link will <b>revoke any existing API keys</b> on this
+       workspace and show you a new one. The link expires in 30 minutes.</p>
+    <p>If this wasn't you, ignore this email and nothing changes.</p>
+    <p style="color:#888;font-size:12px;margin-top:24px;">
+      — RegEngine, Inc.
+    </p>
+    """
+    await _send(tenant.email, "Recover your Sentinel API key", html)
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import generate_api_key, get_current_tenant
+from app.db import get_db
+from app.models import ApiKey, Tenant
+from app.schemas import TenantSettingsUpdate, TenantSignup, _is_supported_approver
+from app.services.onboarding import (
+    InvalidOnboardingToken,
+    send_recovery_email,
+    send_welcome_email,
+    verify_token,
+)
+from app.services.rate_limit import enforce as rate_limit
+
+router = APIRouter()
+
+BLOCKED_DOMAINS = {
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "icloud.com",
+    "proton.me",
+    "protonmail.com",
+}
+
+
+@router.post("/signup")
+async def signup(
+    payload: TenantSignup,
+    background: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if "@" not in payload.email:
+        raise HTTPException(400, "Invalid email")
+    domain = payload.email.split("@")[-1].lower()
+    if domain in BLOCKED_DOMAINS:
+        raise HTTPException(
+            400, "Work email required (personal email domains not allowed)"
+        )
+    # Throttle per IP (5/hour) AND per email-domain (10/hour). Edge proxies
+    # rewrite client IPs through internal NAT, so an IP-only limit is leaky;
+    # the domain limit catches mass signups against one company regardless of
+    # origin IP.
+    await rate_limit(request, bucket="signup", limit=5, window_seconds=3600)
+    await rate_limit(
+        request,
+        bucket="signup-domain",
+        limit=10,
+        window_seconds=3600,
+        key_suffix=domain,
+        by_ip=False,
+    )
+    existing = await db.execute(select(Tenant).where(Tenant.email == payload.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(400, "Email already registered")
+    tenant = Tenant(name=payload.name, email=payload.email, mode=payload.mode)
+    db.add(tenant)
+    await db.flush()
+    raw, prefix, key_hash = generate_api_key(mode=payload.mode)
+    api_key = ApiKey(
+        tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="default"
+    )
+    db.add(api_key)
+    await db.commit()
+    await db.refresh(tenant)
+
+    # Live tenants get the welcome+verify email. Test workspaces don't —
+    # they're for integration testing, not a real human signup.
+    if tenant.mode == "live":
+        background.add_task(send_welcome_email, tenant, raw)
+
+    return {"tenant_id": tenant.id, "api_key": raw, "mode": tenant.mode}
+
+
+# ── Email verification ────────────────────────────────────────────────
+class VerifyPayload(BaseModel):
+    token: str
+
+
+@router.post("/verify-email")
+async def verify_email(payload: VerifyPayload, db: AsyncSession = Depends(get_db)):
+    try:
+        tenant_id = verify_token(payload.token, expected_purpose="verify")
+    except InvalidOnboardingToken as e:
+        raise HTTPException(400, f"Invalid or expired verification link: {e}") from e
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Workspace not found")
+    if tenant.email_verified_at is None:
+        tenant.email_verified_at = datetime.utcnow()
+        await db.commit()
+    return {
+        "tenant_id": tenant.id,
+        "email": tenant.email,
+        "email_verified_at": tenant.email_verified_at,
+    }
+
+
+# ── API key recovery (magic-link, rotates key) ────────────────────────
+class RecoverRequest(BaseModel):
+    email: str
+
+
+@router.post("/recover/request")
+async def recover_request(
+    payload: RecoverRequest,
+    background: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 1: user enters email → we email them a magic link.
+
+    We always return 204, regardless of whether the email matches a real
+    tenant, so this endpoint cannot be used to enumerate accounts.
+    """
+    # 3 recovery emails per IP per hour. Throttles harassment + cost-bomb.
+    await rate_limit(request, bucket="recover", limit=3, window_seconds=3600)
+    email = (payload.email or "").strip().lower()
+    if "@" not in email:
+        # never reveal whether email exists — always pretend success
+        return {"ok": True}
+    result = await db.execute(select(Tenant).where(Tenant.email == email))
+    tenant = result.scalar_one_or_none()
+    if tenant is not None:
+        background.add_task(send_recovery_email, tenant)
+    return {"ok": True}
+
+
+class RecoverExchange(BaseModel):
+    token: str
+
+
+@router.post("/recover/exchange")
+async def recover_exchange(
+    payload: RecoverExchange, db: AsyncSession = Depends(get_db)
+):
+    """Step 2: dashboard POSTs the token from the magic link. We revoke all
+    existing keys and issue a brand-new one. The new key is returned ONCE."""
+    try:
+        tenant_id = verify_token(payload.token, expected_purpose="recover")
+    except InvalidOnboardingToken as e:
+        raise HTTPException(400, f"Invalid or expired recovery link: {e}") from e
+
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Workspace not found")
+
+    # revoke every active key on this tenant
+    now = datetime.utcnow()
+    existing = await db.execute(
+        select(ApiKey).where(ApiKey.tenant_id == tenant.id, ApiKey.revoked_at.is_(None))
+    )
+    for k in existing.scalars():
+        k.revoked_at = now
+
+    # issue a new key
+    raw, prefix, key_hash = generate_api_key()
+    db.add(
+        ApiKey(
+            tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="recovery"
+        )
+    )
+    await db.commit()
+    return {"tenant_id": tenant.id, "api_key": raw}
+
+
+def _serialize_tenant(t: Tenant) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "email": t.email,
+        "default_approvers": t.default_approvers or [],
+        "email_verified_at": t.email_verified_at,
+        "mode": t.mode,
+        "created_at": t.created_at,
+    }
+
+
+@router.get("/me")
+async def get_me(tenant: Tenant = Depends(get_current_tenant)):
+    """Current tenant settings (default approvers, name, email)."""
+    return _serialize_tenant(tenant)
+
+
+@router.patch("/me")
+async def update_me(
+    payload: TenantSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Update mutable settings on the current tenant (currently: default_approvers)."""
+    if payload.default_approvers is not None:
+        normalized = [a.strip() for a in payload.default_approvers if isinstance(a, str) and a.strip()]
+        for a in normalized:
+            if not _is_supported_approver(a):
+                raise HTTPException(
+                    400,
+                    f"Invalid approver '{a}'. Use email, 'mailto:...', or 'sms:+1...'."
+                )
+        tenant.default_approvers = normalized
+    await db.commit()
+    await db.refresh(tenant)
+    return _serialize_tenant(tenant)
+"""Webhook management endpoints — CRUD on webhook_endpoints + read deliveries.
+
+Authenticated with the standard per-tenant API key (Authorization: Bearer [REDACTED]
+"""
+from __future__ import annotations
+
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import get_current_tenant
+from app.db import get_db
+from app.models import Tenant, WebhookDelivery, WebhookEndpoint
+from app.services.pagination import paginate_stmt
+from app.services.webhooks import generate_secret
+
+router = APIRouter()
+
+
+ALLOWED_EVENTS = {"approval.approved", "approval.rejected"}
+
+
+class CreateWebhookRequest(BaseModel):
+    url: str
+    description: str | None = None
+    event_filter: list[str] | None = None  # empty/None = all events
+
+
+def _serialize_endpoint(e: WebhookEndpoint, *, include_secret: bool = False) -> dict:
+    out = {
+        "id": e.id,
+        "url": e.url,
+        "description": e.description,
+        "event_filter": e.event_filter or [],
+        "created_at": e.created_at,
+        "disabled_at": e.disabled_at,
+        "last_used_at": e.last_used_at,
+        "last_status_code": e.last_status_code,
+    }
+    if include_secret:
+        out["secret"] = e.secret  # only on creation
+    return out
+
+
+def _serialize_delivery(d: WebhookDelivery) -> dict:
+    return {
+        "id": d.id,
+        "endpoint_id": d.endpoint_id,
+        "event_type": d.event_type,
+        "action_id": d.action_id,
+        "attempt": d.attempt,
+        "status_code": d.status_code,
+        "response_snippet": d.response_snippet,
+        "delivered_at": d.delivered_at,
+        "created_at": d.created_at,
+    }
+
+
+@router.post("")
+async def create_webhook(
+    payload: CreateWebhookRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Register a new webhook endpoint. The `secret` is returned ONCE — store it,
+    we don't expose it again. Customer uses it to verify HMAC signatures."""
+    if not payload.url.startswith(("https://", "http://")):
+        raise HTTPException(400, "url must start with https:// (or http:// for localhost)")
+    if payload.event_filter:
+        bad = [e for e in payload.event_filter if e not in ALLOWED_EVENTS]
+        if bad:
+            raise HTTPException(
+                400,
+                f"Unknown event(s): {bad}. Allowed: {sorted(ALLOWED_EVENTS)}",
+            )
+
+    secret = generate_secret()
+    endpoint = WebhookEndpoint(
+        tenant_id=tenant.id,
+        url=payload.url,
+        secret=secret,
+        description=payload.description,
+        event_filter=payload.event_filter or None,
+    )
+    db.add(endpoint)
+    await db.commit()
+    await db.refresh(endpoint)
+    return _serialize_endpoint(endpoint, include_secret=True)
+
+
+@router.get("")
+async def list_webhooks(
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """List this tenant's webhook endpoints. Secrets are NOT included."""
+    result = await db.execute(
+        select(WebhookEndpoint)
+        .where(WebhookEndpoint.tenant_id == tenant.id)
+        .order_by(desc(WebhookEndpoint.created_at))
+    )
+    return [_serialize_endpoint(e) for e in result.scalars()]
+
+
+@router.delete("/{endpoint_id}")
+async def disable_webhook(
+    endpoint_id: str,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Soft-disable an endpoint (we keep its delivery history for audit)."""
+    endpoint = await db.get(WebhookEndpoint, endpoint_id)
+    if endpoint is None or endpoint.tenant_id != tenant.id:
+        raise HTTPException(404, "Webhook not found")
+    if endpoint.disabled_at is None:
+        endpoint.disabled_at = datetime.utcnow()
+        await db.commit()
+    return {"id": endpoint.id, "disabled_at": endpoint.disabled_at}
+
+
+@router.get("/deliveries")
+async def list_deliveries(
+    endpoint_id: str | None = Query(None),
+    limit: int | None = Query(None, ge=1, le=200),
+    cursor: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Inspect webhook deliveries for this tenant.
+
+    Backward-compatible: no limit + no cursor → legacy top-50 bare array.
+    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+    """
+    base = select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant.id)
+    if endpoint_id:
+        base = base.where(WebhookDelivery.endpoint_id == endpoint_id)
+
+    if limit is None and cursor is None:
+        stmt = base.order_by(
+            desc(WebhookDelivery.created_at), desc(WebhookDelivery.id)
+        ).limit(50)
+        result = await db.execute(stmt)
+        return [_serialize_delivery(d) for d in result.scalars()]
+
+    page = await paginate_stmt(
+        db, base, WebhookDelivery, limit=limit or 50, cursor=cursor
+    )
+    return {
+        "data": [_serialize_delivery(d) for d in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }
+"""Webhook delivery — HMAC-signed POSTs to customer URLs on approval decisions.
+
+Flow:
+  1. Customer registers an endpoint via POST /v1/webhooks with a URL.
+     We mint a random secret and return it ONCE.
+  2. When an approval is decided (approved/rejected), we look up matching
+     endpoints for that tenant and fire a POST.
+  3. The POST body is JSON: {event, action_id, decision, decided_by, ...}
+  4. We sign the body with HMAC-SHA256(secret, raw_body) and put the
+     signature in the `X-Sentinel-Signature` header. Customer can verify.
+  5. We log every attempt in webhook_deliveries (status_code, response_snippet).
+  6. Best-effort with 3 retries on 5xx/timeout, exponential backoff
+     (1s, 4s, 16s). Never blocks the decision endpoint.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import json
+import logging
+import secrets
+from datetime import datetime
+from typing import Any
+
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Approval, WebhookDelivery, WebhookEndpoint
+
+log = logging.getLogger(__name__)
+
+MAX_ATTEMPTS = 3
+BACKOFF_SECONDS = [1.0, 4.0, 16.0]
+HTTP_TIMEOUT = 8.0
+SIGNATURE_HEADER = "X-Sentinel-Signature"
+EVENT_HEADER = "X-Sentinel-Event"
+ID_HEADER = "X-Sentinel-Delivery"
+
+# The event loop only keeps weak references to tasks; without a strong
+# reference here, an in-flight delivery (and its retries) can be GC'd.
+_inflight: set[asyncio.Task] = set()
+
+
+def _track(task: asyncio.Task) -> None:
+    _inflight.add(task)
+    task.add_done_callback(_on_delivery_done)
+
+
+def _on_delivery_done(task: asyncio.Task) -> None:
+    _inflight.discard(task)
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        log.error("webhook delivery task crashed: %s", exc, exc_info=exc)
+
+
+def generate_secret() -> str:
+    """64-char URL-safe random secret. Shown ONCE on creation."""
+    return f"whsec_{secrets.token_urlsafe(32)}"
+
+
+def sign_body(secret: str, raw_body: bytes) -> str:
+    """HMAC-SHA256 hex digest of the raw POST body, signed with the endpoint secret.
+
+    Customer verifies via:
+        expected = hmac.new(secret.encode(), raw_body, sha256).hexdigest()
+        if not hmac.compare_digest(expected, request.headers["X-Sentinel-Signature"]):
+            return 401
+    """
+    return hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+
+
+def _event_type_for(approval: Approval) -> str | None:
+    if approval.decision == "approved":
+        return "approval.approved"
+    if approval.decision == "rejected":
+        return "approval.rejected"
+    return None
+
+
+def _matches_filter(endpoint: WebhookEndpoint, event_type: str) -> bool:
+    """Endpoint subscribes to event if filter is empty or contains the event."""
+    f = endpoint.event_filter or []
+    if not f:
+        return True
+    return event_type in f
+
+
+def _build_payload(event_type: str, approval: Approval, delivery_id: str) -> dict[str, Any]:
+    return {
+        "id": delivery_id,
+        "event": event_type,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "action_id": approval.id,
+        "tenant_id": approval.tenant_id,
+        "function_name": approval.function_name,
+        "arguments": approval.arguments,
+        "risk_level": approval.risk_level,
+        "decision": approval.decision,
+        "decided_by": approval.decided_by,
+        "decided_at": approval.decided_at.isoformat() + "Z" if approval.decided_at else None,
+        "reason": approval.reason,
+    }
+
+
+async def dispatch_approval_webhook(
+    db: AsyncSession, approval: Approval
+) -> None:
+    """Look up all webhook endpoints for this tenant subscribed to the event,
+    fire each one as a background task (best-effort with retries)."""
+    event_type = _event_type_for(approval)
+    if event_type is None:
+        return
+
+    result = await db.execute(
+        select(WebhookEndpoint).where(
+            WebhookEndpoint.tenant_id == approval.tenant_id,
+            WebhookEndpoint.disabled_at.is_(None),
+        )
+    )
+    endpoints = [e for e in result.scalars() if _matches_filter(e, event_type)]
+    if not endpoints:
+        return
+
+    for endpoint in endpoints:
+        # Spawn each delivery as its own task — never block the caller.
+        _track(asyncio.create_task(_deliver_with_retries(endpoint, event_type, approval)))
+
+
+async def _deliver_with_retries(
+    endpoint: WebhookEndpoint, event_type: str, approval: Approval
+) -> None:
+    """Run in a background task. Owns its own DB session to avoid lifecycle issues."""
+    from app.db import SessionLocal
+
+    delivery_id = f"whd_{secrets.token_hex(8)}"
+    payload = _build_payload(event_type, approval, delivery_id)
+    raw_body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    signature = sign_body(endpoint.secret, raw_body)
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Sentinel-Webhook/1.0",
+        SIGNATURE_HEADER: signature,
+        EVENT_HEADER: event_type,
+        ID_HEADER: delivery_id,
+    }
+
+    last_status: int | None = None
+    last_snippet: str | None = None
+    success = False
+
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                r = await client.post(endpoint.url, content=raw_body, headers=headers)
+                last_status = r.status_code
+                last_snippet = (r.text or "")[:512]
+                if 200 <= r.status_code < 300:
+                    success = True
+                    break
+                # 4xx (except 408/429) — don't retry, the customer rejected us
+                if 400 <= r.status_code < 500 and r.status_code not in (408, 429):
+                    break
+            except httpx.RequestError as e:
+                last_snippet = f"{type(e).__name__}: {str(e)[:400]}"
+            if attempt < MAX_ATTEMPTS:
+                await asyncio.sleep(BACKOFF_SECONDS[attempt - 1])
+
+    # Record delivery + bump endpoint last-used/status
+    try:
+        async with SessionLocal() as db2:
+            db2.add(
+                WebhookDelivery(
+                    id=delivery_id,
+                    endpoint_id=endpoint.id,
+                    tenant_id=endpoint.tenant_id,
+                    event_type=event_type,
+                    action_id=approval.id,
+                    payload=payload,
+                    attempt=attempt,
+                    status_code=last_status,
+                    response_snippet=last_snippet,
+                    delivered_at=datetime.utcnow() if success else None,
+                )
+            )
+            ep = await db2.get(WebhookEndpoint, endpoint.id)
+            if ep is not None:
+                ep.last_used_at = datetime.utcnow()
+                ep.last_status_code = last_status
+            await db2.commit()
+    except Exception:
+        log.exception("Failed to record webhook delivery for endpoint %s", endpoint.id)
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+from twilio.request_validator import RequestValidator
+
+from app.config import settings
+from app.db import get_db
+from app.services.audit_log import append_audit_event
+from app.services.contacts import ACTIVE, REVOKED, set_sms_contact_status_by_phone
+from app.services.notification_attempts import update_attempt_from_provider_status
+
+router = APIRouter(prefix="/webhooks/twilio", tags=["twilio"])
+
+STOP_WORDS = {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"}
+START_WORDS = {"START", "YES", "UNSTOP"}
+
+
+async def _verified_form(request: Request):
+    form = await request.form()
+    params = {key: str(value) for key, value in form.items()}
+    signature = request.headers.get("X-Twilio-Signature", "")
+    if settings.TWILIO_AUTH_TOKEN:
+        validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+        validation_url = f"{settings.PUBLIC_API_URL.rstrip('/')}{request.url.path}"
+        if request.url.query:
+            validation_url = f"{validation_url}?{request.url.query}"
+        if not validator.validate(validation_url, params, signature):
+            raise HTTPException(401, "Invalid Twilio signature")
+    return params
+
+
+@router.post("/status")
+async def status_callback(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    params = await _verified_form(request)
+    message_sid = params.get("MessageSid")
+    message_status = params.get("MessageStatus")
+    if not message_sid or not message_status:
+        raise HTTPException(400, "Missing MessageSid or MessageStatus")
+    attempt, changed = await update_attempt_from_provider_status(
+        db,
+        message_sid,
+        message_status,
+        params.get("ErrorCode"),
+        params.get("ErrorMessage"),
+    )
+    if attempt and changed:
+        await append_audit_event(
+            db,
+            attempt.tenant_id,
+            attempt.action_id,
+            f"notification:sms:{message_status}",
+            params.get("ErrorMessage") or params.get("ErrorCode"),
+        )
+    return {"ok": True}
+
+
+@router.post("/inbound")
+async def inbound_message(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    params = await _verified_form(request)
+    sender = params.get("From")
+    if not sender:
+        raise HTTPException(400, "Missing From")
+    keyword = (params.get("OptOutType") or params.get("Body") or "").strip().upper()
+    status = None
+    action = None
+    if keyword in STOP_WORDS:
+        status = REVOKED
+        action = "opt_out"
+    elif keyword in START_WORDS:
+        status = ACTIVE
+        action = "opt_in"
+    if status:
+        contacts = await set_sms_contact_status_by_phone(db, sender, status, "twilio_inbound")
+        for contact in contacts:
+            await append_audit_event(
+                db,
+                contact.tenant_id,
+                None,
+                f"notification:sms:{action}",
+                None,
+            )
+    return Response(content="", media_type="text/plain")
+sed: tests/conftest.py: No such file or directory

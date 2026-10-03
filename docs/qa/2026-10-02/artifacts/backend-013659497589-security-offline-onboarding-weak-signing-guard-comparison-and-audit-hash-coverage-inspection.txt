@@ -1,0 +1,3 @@
+onboarding_accepts_default_signing_configuration: True
+approval_guard_rejects_same_configuration: True
+No raw token or signing key output. No environment/config imports or external calls.

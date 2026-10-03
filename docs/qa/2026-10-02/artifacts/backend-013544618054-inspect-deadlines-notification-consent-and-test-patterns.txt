@@ -1,0 +1,697 @@
+tests/test_schemas.py:7:def test_approval_create_rejects_slack_approvers():
+tests/test_schemas.py:22:def test_approval_create_accepts_sms_and_email_approvers():
+tests/test_approval_sms_consent.py:7:def test_create_approval_rejects_unregistered_sms_approver():
+tests/test_approval_sms_consent.py:18:                    "timeout_seconds": 300,
+tests/test_approval_sms_consent.py:23:        assert "active sms consent" in response.json()["detail"].lower()
+tests/test_approval_sms_consent.py:29:def test_create_approval_rejects_revoked_sms_approver():
+tests/test_approval_sms_consent.py:41:                consent_status="revoked",
+tests/test_approval_sms_consent.py:42:                consent_source="dashboard",
+tests/test_approval_sms_consent.py:55:                    "timeout_seconds": 300,
+tests/test_approval_sms_consent.py:60:        assert "active sms consent" in response.json()["detail"].lower()
+tests/test_approval_sms_consent.py:66:def test_create_approval_accepts_active_sms_contact(monkeypatch):
+tests/test_approval_sms_consent.py:81:                    "consent_attested": True,
+tests/test_approval_sms_consent.py:82:                    "consent_source": "dashboard",
+tests/test_approval_sms_consent.py:94:                    "timeout_seconds": 300,
+tests/test_approval_tokens.py:20:def test_decision_token_round_trips_for_bound_action_and_decision():
+tests/test_approval_tokens.py:24:        expires_in_seconds=300,
+tests/test_approval_tokens.py:31:def test_decision_token_rejects_wrong_action_id():
+tests/test_approval_tokens.py:35:        expires_in_seconds=300,
+tests/test_approval_tokens.py:43:def test_decision_token_rejects_expired_token():
+tests/test_approval_tokens.py:47:        expires_in_seconds=300,
+tests/test_approval_tokens.py:55:def test_decision_token_refuses_default_signing_secret(monkeypatch):
+tests/test_approval_tokens.py:62:            expires_in_seconds=300,
+tests/test_coverage_tenants.py:15:def test_signup_rejects_invalid_email():
+tests/test_coverage_tenants.py:29:def test_signup_rejects_personal_email_domain():
+tests/test_coverage_tenants.py:43:def test_signup_creates_test_tenant_and_api_key():
+tests/test_coverage_tenants.py:63:def test_signup_rejects_duplicate_email():
+tests/test_coverage_tenants.py:83:def test_verify_email_with_valid_token():
+tests/test_coverage_tenants.py:98:def test_verify_email_rejects_bad_token():
+tests/test_coverage_tenants.py:104:        assert "Invalid or expired" in resp.json()["detail"]
+tests/test_coverage_tenants.py:110:def test_verify_email_404_for_unknown_tenant():
+tests/test_coverage_tenants.py:122:def test_recover_request_always_204_for_unknown_email():
+tests/test_coverage_tenants.py:136:def test_recover_request_no_at_sign_still_ok():
+tests/test_coverage_tenants.py:148:def test_recover_request_known_email_queues_email():
+tests/test_coverage_tenants.py:162:def test_recover_exchange_rotates_keys():
+tests/test_coverage_tenants.py:185:def test_recover_exchange_rejects_bad_token():
+tests/test_coverage_tenants.py:198:def test_recover_exchange_404_for_missing_tenant():
+tests/test_coverage_tenants.py:210:def test_get_me_serializes_tenant():
+tests/test_coverage_tenants.py:219:        assert body["default_approvers"] == []
+tests/test_coverage_tenants.py:225:def test_update_me_sets_default_approvers():
+tests/test_coverage_tenants.py:231:                json={"default_approvers": [" boss@acme.io ", "sms:+15551230000"]},
+tests/test_coverage_tenants.py:234:        assert resp.json()["default_approvers"] == ["boss@acme.io", "sms:+15551230000"]
+tests/test_coverage_tenants.py:240:def test_update_me_rejects_invalid_approver():
+tests/test_coverage_tenants.py:245:                "/v1/tenants/me", json={"default_approvers": ["not-an-approver"]}
+app/services/webhooks.py:12:  6. Best-effort with 3 retries on 5xx/timeout, exponential backoff
+app/services/webhooks.py:152:    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+app/services/approval_tokens.py:26:    expires_in_seconds: int,
+app/services/approval_tokens.py:35:        "exp": issued_at + expires_in_seconds,
+app/services/approval_tokens.py:70:        raise InvalidApprovalToken("Approval token expired")
+app/services/notifications.py:63:        async with httpx.AsyncClient(timeout=10.0) as client:
+app/services/notifications.py:106:        async with httpx.AsyncClient(timeout=10.0) as client:
+app/services/notifications.py:113:                        logger.warning("sms notify skipped: no active consent contact for %s", normalized_recipient[-4:])
+app/services/notifications.py:171:        expires_in_seconds=approval.timeout_seconds,
+app/services/rate_limit.py:84:            await r.expire(key, window_seconds)
+app/services/decision_bus.py:48:            self._conn = await asyncpg.connect(dsn=_asyncpg_dsn(), timeout=10)
+app/services/decision_bus.py:76:    async def wait_for(self, action_id: str, timeout: float) -> bool:
+app/services/decision_bus.py:77:        """Block until a NOTIFY arrives for `action_id` or timeout. Returns True
+app/services/decision_bus.py:78:        if a notify was received, False on timeout."""
+app/services/decision_bus.py:84:                await asyncio.wait_for(ev.wait(), timeout=timeout)
+app/services/approval_service.py:10:    the tenant's saved `default_approvers`, then to the global env-var
+app/services/approval_service.py:14:    tenant_defaults = list(tenant.default_approvers or [])
+app/services/approval_service.py:17:    global_defaults = settings.default_approvers_list
+app/services/approval_service.py:23:        "request, or set tenant default_approvers via PATCH /v1/tenants/me, "
+app/services/approval_service.py:41:        timeout_seconds=payload.timeout_seconds,
+app/services/approval_service.py:59:        "timeout_seconds": approval.timeout_seconds,
+app/services/onboarding.py:99:        async with httpx.AsyncClient(timeout=10.0) as client:
+app/services/onboarding.py:193:       workspace and show you a new one. The link expires in 30 minutes.</p>
+app/services/idempotency.py:171:        db.expire_all()
+app/services/contacts.py:63:    if contact and contact.consent_status == ACTIVE:
+app/services/contacts.py:73:    consent_source: str,
+app/services/contacts.py:74:    consent_note: str | None = None,
+app/services/contacts.py:87:            consent_status=ACTIVE,
+app/services/contacts.py:88:            consent_source=consent_source,
+app/services/contacts.py:89:            consent_note=consent_note,
+app/services/contacts.py:90:            consented_at=now,
+app/services/contacts.py:100:        contact.consent_status = ACTIVE
+app/services/contacts.py:101:        contact.consent_source = consent_source
+app/services/contacts.py:102:        contact.consent_note = consent_note
+app/services/contacts.py:103:        contact.consented_at = now
+app/services/contacts.py:124:    contact.consent_status = REVOKED
+app/services/contacts.py:136:    consent_source: str,
+app/services/contacts.py:148:        contact.consent_status = status
+app/services/contacts.py:149:        contact.consent_source = consent_source
+app/services/contacts.py:152:            contact.consented_at = now
+app/services/contacts.py:170:        "consent_status": contact.consent_status,
+app/services/contacts.py:171:        "consent_source": contact.consent_source,
+app/services/contacts.py:172:        "consent_note": contact.consent_note,
+app/services/contacts.py:173:        "consented_at": contact.consented_at,
+app/services/tsa.py:100:        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
+app/schemas.py:44:    timeout_seconds: int = 300
+app/schemas.py:64:    @field_validator("timeout_seconds")
+app/schemas.py:66:    def _positive_timeout(cls, v: int) -> int:
+app/schemas.py:68:            raise ValueError("timeout_seconds must be between 1 and 86400")
+app/schemas.py:81:    timeout_seconds: int
+app/schemas.py:101:    default_approvers: list[str] | None = None
+app/schemas.py:114:    consent_attested: bool = False
+app/schemas.py:115:    consent_source: str = "dashboard"
+app/schemas.py:116:    consent_note: str | None = None
+app/schemas.py:135:    consent_status: str
+app/schemas.py:136:    consent_source: str
+app/schemas.py:137:    consent_note: str | None = None
+app/schemas.py:138:    consented_at: datetime | None = None
+app/models.py:23:    default_approvers: Mapped[list | None] = mapped_column(JSON, nullable=True)
+app/models.py:52:    timeout_seconds: Mapped[int] = mapped_column(Integer, default=300)
+app/models.py:141:    consent_status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+app/models.py:142:    consent_source: Mapped[str] = mapped_column(String, nullable=False)
+app/models.py:143:    consent_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+app/models.py:144:    consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+app/config.py:55:    def default_approvers_list(self) -> list[str]:
+app/db.py:23:SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+app/db.py:33:    ReadSessionLocal = async_sessionmaker(read_engine, class_=AsyncSession, expire_on_commit=False)
+app/routers/tenants.py:92:        raise HTTPException(400, f"Invalid or expired verification link: {e}") from e
+app/routers/tenants.py:149:        raise HTTPException(400, f"Invalid or expired recovery link: {e}") from e
+app/routers/tenants.py:179:        "default_approvers": t.default_approvers or [],
+app/routers/tenants.py:198:    """Update mutable settings on the current tenant (currently: default_approvers)."""
+app/routers/tenants.py:199:    if payload.default_approvers is not None:
+app/routers/tenants.py:200:        normalized = [a.strip() for a in payload.default_approvers if isinstance(a, str) and a.strip()]
+app/routers/tenants.py:207:        tenant.default_approvers = normalized
+app/routers/approvals.py:49:        "timeout_seconds": a.timeout_seconds,
+app/routers/approvals.py:76:                    400, "SMS approver requires active SMS consent contact"
+app/routers/approvals.py:133:    timeout: float = Query(30, ge=1, le=300, description="Seconds to wait for a decision"),
+app/routers/approvals.py:146:    deadline = asyncio.get_event_loop().time() + timeout
+app/routers/approvals.py:227:        raise HTTPException(401, "Invalid or expired approval token") from None
+app/routers/billing.py:41:    async with httpx.AsyncClient(timeout=15.0) as client:
+app/routers/billing.py:169:        elif status in ("canceled", "incomplete_expired"):
+app/routers/approver_contacts.py:24:    if not payload.consent_attested:
+app/routers/approver_contacts.py:25:        raise HTTPException(400, "SMS consent must be explicitly attested")
+app/routers/approver_contacts.py:31:        payload.consent_source,
+app/routers/approver_contacts.py:32:        payload.consent_note,
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import generate_api_key, get_current_tenant
+from app.db import get_db
+from app.models import ApiKey, Tenant
+from app.schemas import TenantSettingsUpdate, TenantSignup, _is_supported_approver
+from app.services.onboarding import (
+    InvalidOnboardingToken,
+    send_recovery_email,
+    send_welcome_email,
+    verify_token,
+)
+from app.services.rate_limit import enforce as rate_limit
+
+router = APIRouter()
+
+BLOCKED_DOMAINS = {
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "icloud.com",
+    "proton.me",
+    "protonmail.com",
+}
+
+
+@router.post("/signup")
+async def signup(
+    payload: TenantSignup,
+    background: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if "@" not in payload.email:
+        raise HTTPException(400, "Invalid email")
+    domain = payload.email.split("@")[-1].lower()
+    if domain in BLOCKED_DOMAINS:
+        raise HTTPException(
+            400, "Work email required (personal email domains not allowed)"
+        )
+    # Throttle per IP (5/hour) AND per email-domain (10/hour). Edge proxies
+    # rewrite client IPs through internal NAT, so an IP-only limit is leaky;
+    # the domain limit catches mass signups against one company regardless of
+    # origin IP.
+    await rate_limit(request, bucket="signup", limit=5, window_seconds=3600)
+    await rate_limit(
+        request,
+        bucket="signup-domain",
+        limit=10,
+        window_seconds=3600,
+        key_suffix=domain,
+        by_ip=False,
+    )
+    existing = await db.execute(select(Tenant).where(Tenant.email == payload.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(400, "Email already registered")
+    tenant = Tenant(name=payload.name, email=payload.email, mode=payload.mode)
+    db.add(tenant)
+    await db.flush()
+    raw, prefix, key_hash = generate_api_key(mode=payload.mode)
+    api_key = ApiKey(
+        tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="default"
+    )
+    db.add(api_key)
+    await db.commit()
+    await db.refresh(tenant)
+
+    # Live tenants get the welcome+verify email. Test workspaces don't —
+    # they're for integration testing, not a real human signup.
+    if tenant.mode == "live":
+        background.add_task(send_welcome_email, tenant, raw)
+
+    return {"tenant_id": tenant.id, "api_key": raw, "mode": tenant.mode}
+
+
+# ── Email verification ────────────────────────────────────────────────
+class VerifyPayload(BaseModel):
+    token: str
+
+
+@router.post("/verify-email")
+async def verify_email(payload: VerifyPayload, db: AsyncSession = Depends(get_db)):
+    try:
+        tenant_id = verify_token(payload.token, expected_purpose="verify")
+    except InvalidOnboardingToken as e:
+        raise HTTPException(400, f"Invalid or expired verification link: {e}") from e
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Workspace not found")
+    if tenant.email_verified_at is None:
+        tenant.email_verified_at = datetime.utcnow()
+        await db.commit()
+    return {
+        "tenant_id": tenant.id,
+        "email": tenant.email,
+        "email_verified_at": tenant.email_verified_at,
+    }
+
+
+# ── API key recovery (magic-link, rotates key) ────────────────────────
+class RecoverRequest(BaseModel):
+    email: str
+
+
+@router.post("/recover/request")
+async def recover_request(
+    payload: RecoverRequest,
+    background: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 1: user enters email → we email them a magic link.
+
+    We always return 204, regardless of whether the email matches a real
+    tenant, so this endpoint cannot be used to enumerate accounts.
+    """
+    # 3 recovery emails per IP per hour. Throttles harassment + cost-bomb.
+    await rate_limit(request, bucket="recover", limit=3, window_seconds=3600)
+    email = (payload.email or "").strip().lower()
+    if "@" not in email:
+        # never reveal whether email exists — always pretend success
+        return {"ok": True}
+    result = await db.execute(select(Tenant).where(Tenant.email == email))
+    tenant = result.scalar_one_or_none()
+    if tenant is not None:
+        background.add_task(send_recovery_email, tenant)
+    return {"ok": True}
+
+
+class RecoverExchange(BaseModel):
+    token: str
+
+
+@router.post("/recover/exchange")
+async def recover_exchange(
+    payload: RecoverExchange, db: AsyncSession = Depends(get_db)
+):
+    """Step 2: dashboard POSTs the token from the magic link. We revoke all
+    existing keys and issue a brand-new one. The new key is returned ONCE."""
+    try:
+        tenant_id = verify_token(payload.token, expected_purpose="recover")
+    except InvalidOnboardingToken as e:
+        raise HTTPException(400, f"Invalid or expired recovery link: {e}") from e
+
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Workspace not found")
+
+    # revoke every active key on this tenant
+    now = datetime.utcnow()
+    existing = await db.execute(
+        select(ApiKey).where(ApiKey.tenant_id == tenant.id, ApiKey.revoked_at.is_(None))
+    )
+    for k in existing.scalars():
+        k.revoked_at = now
+
+    # issue a new key
+    raw, prefix, key_hash = generate_api_key()
+    db.add(
+        ApiKey(
+            tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="recovery"
+        )
+    )
+    await db.commit()
+    return {"tenant_id": tenant.id, "api_key": raw}
+
+
+def _serialize_tenant(t: Tenant) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "email": t.email,
+        "default_approvers": t.default_approvers or [],
+        "email_verified_at": t.email_verified_at,
+        "mode": t.mode,
+        "created_at": t.created_at,
+    }
+
+
+@router.get("/me")
+async def get_me(tenant: Tenant = Depends(get_current_tenant)):
+    """Current tenant settings (default approvers, name, email)."""
+    return _serialize_tenant(tenant)
+
+
+@router.patch("/me")
+async def update_me(
+    payload: TenantSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Update mutable settings on the current tenant (currently: default_approvers)."""
+    if payload.default_approvers is not None:
+        normalized = [a.strip() for a in payload.default_approvers if isinstance(a, str) and a.strip()]
+        for a in normalized:
+            if not _is_supported_approver(a):
+                raise HTTPException(
+                    400,
+                    f"Invalid approver '{a}'. Use email, 'mailto:...', or 'sms:+1...'."
+                )
+        tenant.default_approvers = normalized
+    await db.commit()
+    await db.refresh(tenant)
+    return _serialize_tenant(tenant)
+import json
+import logging
+from html import escape
+from urllib.parse import urlencode
+
+import httpx
+
+from app.config import settings
+from app.db import SessionLocal
+from app.services.approval_tokens import create_decision_token
+from app.services.audit_log import append_audit_event
+from app.services.contacts import find_active_sms_contact, normalize_phone_number
+from app.services.notification_attempts import (
+    create_sms_attempt,
+    mark_attempt_failed,
+    mark_attempt_sent,
+)
+
+logger = logging.getLogger(__name__)
+
+
+async def dispatch_approval_notifications(approval, tenant, db=None):
+    # Test-mode workspaces never fire real email/SMS — approvals are still
+    # created and decidable via API/dashboard so customers can integrate
+    # safely, but no real human gets paged and no provider cost is incurred.
+    if tenant is not None and getattr(tenant, "mode", "live") == "test":
+        return
+    await _send_email(approval, tenant)
+    if db is not None or tenant is None:
+        await _send_sms(approval, tenant, db)
+        return
+    async with SessionLocal() as session:
+        await _send_sms(approval, tenant, session)
+
+
+async def _send_email(approval, tenant):
+    api_key = settings.RESEND_API_KEY
+    if not api_key:
+        return
+    recipients: list[str] = []
+    for approver in approval.approvers or []:
+        if not isinstance(approver, str):
+            continue
+        if approver.startswith("mailto:"):
+            recipients.append(approver[len("mailto:"):])
+        elif "@" in approver and not approver.startswith("sms:"):
+            recipients.append(approver)
+    if not recipients:
+        return
+    try:
+        approve_url = _decision_url(approval, "approved")
+        reject_url = _decision_url(approval, "rejected")
+        args_str = escape(json.dumps(approval.arguments, indent=2, default=str), quote=True)
+        function_name = escape(str(approval.function_name), quote=True)
+        risk_level = escape(str(approval.risk_level), quote=True)
+        html = (
+            f"<h2>Approval needed: {function_name}</h2>"
+            f"<p><b>Risk:</b> {risk_level}</p>"
+            f"<pre>{args_str}</pre>"
+            f'<p><a href="{approve_url}">Approve</a> &middot; '
+            f'<a href="{reject_url}">Reject</a></p>'
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": [REDACTED]"Bearer {api_key}"},
+                json={
+                    "from": settings.EMAIL_FROM or "Sentinel <approvals@regengine.co>",
+                    "reply_to": settings.EMAIL_REPLY_TO or "support@regengine.co",
+                    "to": recipients,
+                    "subject": f"Approval needed: {approval.function_name}",
+                    "html": html,
+                },
+            )
+    except Exception as e:
+        logger.warning("email notify failed: %s", e)
+
+
+async def _send_sms(approval, tenant, db=None):
+    account_sid = settings.TWILIO_ACCOUNT_SID
+    auth_token = settings.TWILIO_AUTH_TOKEN
+    from_number = settings.TWILIO_FROM_NUMBER
+    messaging_service_sid = settings.TWILIO_MESSAGING_SERVICE_SID
+    if not account_sid or not auth_token or not (from_number or messaging_service_sid):
+        return
+    recipients: list[str] = []
+    for approver in approval.approvers or []:
+        if isinstance(approver, str) and approver.startswith("sms:"):
+            recipients.append(approver[len("sms:"):])
+    if not recipients:
+        return
+    try:
+        approve_url = _decision_url(approval, "approved")
+        reject_url = _decision_url(approval, "rejected")
+        body = (
+            f"Sentinel approval needed: {approval.function_name}\n"
+            f"Risk: {approval.risk_level}\n"
+            f"Approve: {approve_url}\n"
+            f"Reject: {reject_url}\n"
+            "Reply STOP to opt out, HELP for help."
+        )
+        url = (
+            "https://api.twilio.com/2010-04-01/Accounts/"
+            f"{account_sid}/Messages.json"
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            for recipient in recipients:
+                normalized_recipient = normalize_phone_number(recipient)
+                contact = None
+                if db is not None and tenant is not None:
+                    contact = await find_active_sms_contact(db, tenant.id, normalized_recipient)
+                    if contact is None:
+                        logger.warning("sms notify skipped: no active consent contact for %s", normalized_recipient[-4:])
+                        continue
+                attempt = None
+                if db is not None and tenant is not None:
+                    attempt = await create_sms_attempt(
+                        db,
+                        tenant.id,
+                        approval.id,
+                        contact.id if contact else None,
+                        normalized_recipient,
+                    )
+                message_data = {
+                    "To": normalized_recipient,
+                    "Body": body,
+                }
+                if settings.PUBLIC_API_URL:
+                    message_data["StatusCallback"] = (
+                        f"{settings.PUBLIC_API_URL.rstrip('/')}/webhooks/twilio/status"
+                    )
+                if messaging_service_sid:
+                    message_data["MessagingServiceSid"] = messaging_service_sid
+                else:
+                    message_data["From"] = from_number
+                try:
+                    response = await client.post(
+                        url,
+                        auth=(account_sid, auth_token),
+                        data=message_data,
+                    )
+                    response.raise_for_status()
+                    provider_payload = response.json()
+                    if attempt is not None:
+                        await mark_attempt_sent(
+                            db,
+                            attempt,
+                            provider_payload.get("sid"),
+                            provider_payload.get("status"),
+                        )
+                except Exception as e:
+                    error_message = _provider_error_message(e)
+                    if attempt is not None:
+                        await mark_attempt_failed(db, attempt, error_message, _provider_error_code(e))
+                        await append_audit_event(
+                            db,
+                            tenant.id,
+                            approval.id,
+                            "notification:sms:failed",
+                            error_message,
+                        )
+                    logger.warning("sms notify failed: %s", e)
+    except Exception as e:
+        logger.warning("sms notify failed: %s", e)
+
+
+def _decision_url(approval, decision: str) -> str:
+    token = create_decision_token(
+        approval.id,
+        decision,
+        expires_in_seconds=approval.timeout_seconds,
+    )
+    query = urlencode({"d": decision, "t": token})
+    return f"{settings.PUBLIC_APP_URL}/approve/{approval.id}?{query}"
+
+
+def _provider_error_message(error: Exception) -> str:
+    if isinstance(error, httpx.HTTPStatusError):
+        return f"HTTP {error.response.status_code}: {error.response.text}"
+    return str(error)
+
+
+def _provider_error_code(error: Exception) -> str | None:
+    if isinstance(error, httpx.HTTPStatusError):
+        return str(error.response.status_code)
+    return None
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.logging_setup import RequestContextMiddleware, configure_logging
+from app.routers import (
+    admin,
+    approvals,
+    approver_contacts,
+    audit,
+    billing,
+    status_history,
+    tenants,
+    twilio_webhooks,
+    webhooks,
+)
+from app.services.decision_bus import bus
+
+# Configure structured (JSON) logging first so anything below logs as JSON.
+configure_logging(level="INFO")
+
+# Initialize Sentry as early as possible so import-time errors are captured too.
+if settings.SENTRY_DSN:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.SENTRY_ENVIRONMENT,
+        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,  # never send phone/email/approval payloads
+        max_breadcrumbs=50,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await bus.start()
+    try:
+        yield
+    finally:
+        await bus.stop()
+
+
+app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
+
+# Request context — stamps request_id + method + route on every log line,
+# emits a structured "request.completed" record. Must be added BEFORE the
+# CORS middleware so it wraps the inner handler chain.
+app.add_middleware(RequestContextMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://pauseapi.app",
+        "https://app.pauseapi.app",
+        "http://localhost:3000",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
+
+app.include_router(tenants.router, prefix="/v1/tenants", tags=["tenants"])
+app.include_router(approvals.router, prefix="/v1/approvals", tags=["approvals"])
+app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tags=["approver-contacts"])
+app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
+app.include_router(twilio_webhooks.router)
+app.include_router(webhooks.router, prefix="/v1/webhooks", tags=["webhooks"])
+app.include_router(status_history.router, prefix="/v1/status", tags=["status"])
+app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
+app.include_router(admin.router, prefix="/v1", tags=["admin"])
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "bus": bus._started}
+import base64
+import hashlib
+import hmac
+import json
+import time
+
+from app.config import settings
+
+VALID_DECISIONS = {"approved", "rejected"}
+WEAK_SIGNING_SECRETS = {
+    "",
+    "change-me",
+    "dev-only-replace",
+    "replace-with-rs256-key",
+    "replace-with-32-byte-random-secret",
+}
+
+
+class InvalidApprovalToken(ValueError):
+    pass
+
+
+def create_decision_token(
+    action_id: str,
+    decision: str,
+    expires_in_seconds: int,
+    now: int | None = None,
+) -> str:
+    if decision not in VALID_DECISIONS:
+        raise ValueError("decision must be 'approved' or 'rejected'")
+    issued_at = int(time.time() if now is None else now)
+    payload = {
+        "action_id": action_id,
+        "decision": decision,
+        "exp": issued_at + expires_in_seconds,
+    }
+    payload_part = _base64url_encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    )
+    signature_part = _sign(payload_part)
+    return f"{payload_part}.{signature_part}"
+
+
+def verify_decision_token(
+    token: str,
+    action_id: str,
+    now: int | None = None,
+) -> str:
+    try:
+        payload_part, signature_part = token.split(".", 1)
+    except ValueError as exc:
+        raise InvalidApprovalToken("Malformed approval token") from exc
+
+    expected_signature = _sign(payload_part)
+    if not hmac.compare_digest(expected_signature, signature_part):
+        raise InvalidApprovalToken("Invalid approval token signature")
+
+    try:
+        payload = json.loads(_base64url_decode(payload_part))
+    except (ValueError, TypeError) as exc:
+        raise InvalidApprovalToken("Malformed approval token payload") from exc
+
+    if payload.get("action_id") != action_id:
+        raise InvalidApprovalToken("Approval token action mismatch")
+    decision = payload.get("decision")
+    if decision not in VALID_DECISIONS:
+        raise InvalidApprovalToken("Invalid approval token decision")
+    current_time = int(time.time() if now is None else now)
+    if int(payload.get("exp", 0)) < current_time:
+        raise InvalidApprovalToken("Approval token expired")
+    return decision
+
+
+def _sign(payload_part: str) -> str:
+    _require_strong_signing_secret()
+    digest = hmac.new(
+        settings.JWT_SECRET.encode(),
+        payload_part.encode(),
+        hashlib.sha256,
+    ).digest()
+    return _base64url_encode(digest)
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _require_strong_signing_secret() -> None:
+    secret = settings.JWT_SECRET
+    if secret in WEAK_SIGNING_SECRETS or len(secret) < 32:
+        raise RuntimeError("JWT_SECRET must be a strong random value for approval links")

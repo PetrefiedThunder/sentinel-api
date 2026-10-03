@@ -1,0 +1,614 @@
+---
+name: "playwright"
+description: "Use when the task requires automating a real browser from the terminal (navigation, form filling, snapshots, screenshots, data extraction, UI-flow debugging) via `playwright-cli` or the bundled wrapper script."
+---
+
+
+# Playwright CLI Skill
+
+Drive a real browser from the terminal using `playwright-cli`. Prefer the bundled wrapper script so the CLI works even when it is not globally installed.
+Treat this skill as CLI-first automation. Do not pivot to `@playwright/test` unless the user explicitly asks for test files.
+
+## Prerequisite check (required)
+
+Before proposing commands, check whether `npx` is available (the wrapper depends on it):
+
+```bash
+command -v npx >/dev/null 2>&1
+```
+
+If it is not available, pause and ask the user to install Node.js/npm (which provides `npx`). Provide these steps verbatim:
+
+```bash
+# Verify Node/npm are installed
+node --version
+npm --version
+
+# If missing, install Node.js/npm, then:
+npm install -g @playwright/cli@latest
+playwright-cli --help
+```
+
+Once `npx` is present, proceed with the wrapper script. A global install of `playwright-cli` is optional.
+
+## Skill path (set once)
+
+```bash
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+export PWCLI="$CODEX_HOME/skills/playwright/scripts/playwright_cli.sh"
+```
+
+User-scoped skills install under `$CODEX_HOME/skills` (default: `~/.codex/skills`).
+
+## Quick start
+
+Use the wrapper script:
+
+```bash
+"$PWCLI" open https://playwright.dev --headed
+"$PWCLI" snapshot
+"$PWCLI" click e15
+"$PWCLI" type "Playwright"
+"$PWCLI" press Enter
+"$PWCLI" screenshot
+```
+
+If the user prefers a global install, this is also valid:
+
+```bash
+npm install -g @playwright/cli@latest
+playwright-cli --help
+```
+
+## Core workflow
+
+1. Open the page.
+2. Snapshot to get stable element refs.
+3. Interact using refs from the latest snapshot.
+4. Re-snapshot after navigation or significant DOM changes.
+5. Capture artifacts (screenshot, pdf, traces) when useful.
+
+Minimal loop:
+
+```bash
+"$PWCLI" open https://example.com
+"$PWCLI" snapshot
+"$PWCLI" click e3
+"$PWCLI" snapshot
+```
+
+## When to snapshot again
+
+Snapshot again after:
+
+- navigation
+- clicking elements that change the UI substantially
+- opening/closing modals or menus
+- tab switches
+
+Refs can go stale. When a command fails due to a missing ref, snapshot again.
+
+## Recommended patterns
+
+### Form fill and submit
+
+```bash
+"$PWCLI" open https://example.com/form
+"$PWCLI" snapshot
+"$PWCLI" fill e1 "user@example.com"
+"$PWCLI" fill e2 "password123"
+"$PWCLI" click e3
+"$PWCLI" snapshot
+```
+
+### Debug a UI flow with traces
+
+```bash
+"$PWCLI" open https://example.com --headed
+"$PWCLI" tracing-start
+# ...interactions...
+"$PWCLI" tracing-stop
+```
+
+### Multi-tab work
+
+```bash
+"$PWCLI" tab-new https://example.com
+"$PWCLI" tab-list
+"$PWCLI" tab-select 0
+"$PWCLI" snapshot
+```
+
+## Wrapper script
+
+The wrapper script uses `npx --package @playwright/cli playwright-cli` so the CLI can run without a global install:
+
+```bash
+"$PWCLI" --help
+```
+
+Prefer the wrapper unless the repository already standardizes on a global install.
+
+## References
+
+Open only what you need:
+
+- CLI command reference: `references/cli.md`
+- Practical workflows and troubleshooting: `references/workflows.md`
+
+## Guardrails
+
+- Always snapshot before referencing element ids like `e12`.
+- Re-snapshot when refs seem stale.
+- Prefer explicit commands over `eval` and `run-code` unless needed.
+- When you do not have a fresh snapshot, use placeholder refs like `eX` and say why; do not bypass refs with `run-code`.
+- Use `--headed` when a visual check will help.
+- When capturing artifacts in this repo, use `output/playwright/` and avoid introducing new top-level artifact folders.
+- Default to CLI commands and workflows, not Playwright test specs.
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.logging_setup import RequestContextMiddleware, configure_logging
+from app.routers import (
+    admin,
+    approvals,
+    approver_contacts,
+    audit,
+    billing,
+    status_history,
+    tenants,
+    twilio_webhooks,
+    webhooks,
+)
+from app.services.decision_bus import bus
+
+# Configure structured (JSON) logging first so anything below logs as JSON.
+configure_logging(level="INFO")
+
+# Initialize Sentry as early as possible so import-time errors are captured too.
+if settings.SENTRY_DSN:
+    import sentry_sdk
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.SENTRY_ENVIRONMENT,
+        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,  # never send phone/email/approval payloads
+        max_breadcrumbs=50,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await bus.start()
+    try:
+        yield
+    finally:
+        await bus.stop()
+
+
+app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
+
+# Request context — stamps request_id + method + route on every log line,
+# emits a structured "request.completed" record. Must be added BEFORE the
+# CORS middleware so it wraps the inner handler chain.
+app.add_middleware(RequestContextMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://pauseapi.app",
+        "https://app.pauseapi.app",
+        "http://localhost:3000",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
+
+app.include_router(tenants.router, prefix="/v1/tenants", tags=["tenants"])
+app.include_router(approvals.router, prefix="/v1/approvals", tags=["approvals"])
+app.include_router(approver_contacts.router, prefix="/v1/approver-contacts", tags=["approver-contacts"])
+app.include_router(audit.router, prefix="/v1/audit-events", tags=["audit"])
+app.include_router(twilio_webhooks.router)
+app.include_router(webhooks.router, prefix="/v1/webhooks", tags=["webhooks"])
+app.include_router(status_history.router, prefix="/v1/status", tags=["status"])
+app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
+app.include_router(admin.router, prefix="/v1", tags=["admin"])
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "bus": bus._started}
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    DATABASE_URL: str = "postgresql+asyncpg://[REDACTED]@localhost:5432/sentinel"
+    # Optional Postgres read replica. When empty (default), read-only endpoints
+    # fall back to the primary engine — behaviour is identical to having no
+    # replica. When set, read sessions target this URL. See
+    # docs/runbooks/postgres-read-replica.md for provisioning.
+    READ_REPLICA_URL: str = ""
+    REDIS_URL: str = "redis://localhost:6379/0"
+    JWT_SECRET: str = "change-me"
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_FROM_NUMBER: str = ""
+    TWILIO_MESSAGING_SERVICE_SID: str = ""
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = ""
+    EMAIL_REPLY_TO: str = ""
+    PUBLIC_APP_URL: str = "https://app.pauseapi.app"
+    PUBLIC_API_URL: str = "https://api.pauseapi.app"
+    # Comma-separated list of approver strings (email or sms:+1...). Used when the
+    # caller's `approvers` list is empty — so the system always has a fallback recipient.
+    DEFAULT_APPROVERS: str = ""
+
+    ADMIN_TOKEN: str = ""
+
+    # Staleness threshold for an in-progress idempotency claim. New writes
+    # atomically commit the claim, handler effects, and stored response, so a
+    # crash rolls them all back. A committed _IN_PROGRESS row can only have an
+    # indeterminate/legacy outcome; once older than this threshold it fails
+    # closed with 409 instead of re-running a potentially completed write. Keep
+    # this comfortably above the longest expected handler and brief poll window.
+    IDEMPOTENCY_INPROGRESS_TTL_SECONDS: int = 30
+
+    # Stripe billing — keys come from Stripe dashboard. If empty, billing
+    # endpoints return 503 (feature disabled).
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_PRO: str = ""  # price_... id of the Pro monthly plan
+    STRIPE_SUCCESS_URL: str = "https://app.pauseapi.app/billing?status=success"
+    STRIPE_CANCEL_URL: str = "https://app.pauseapi.app/billing?status=cancelled"
+
+    # RFC 3161 Time Stamping Authority endpoint (e.g. https://freetsa.org/tsr).
+    # Empty (default) disables audit-event timestamping entirely.
+    TSA_URL: str = ""
+
+    SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = "production"
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.05
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def default_approvers_list(self) -> list[str]:
+        return [a.strip() for a in self.DEFAULT_APPROVERS.split(",") if a.strip()]
+
+
+settings = Settings()
+from datetime import datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import generate_api_key, get_current_tenant
+from app.db import get_db
+from app.models import ApiKey, Tenant
+from app.schemas import TenantSettingsUpdate, TenantSignup, _is_supported_approver
+from app.services.onboarding import (
+    InvalidOnboardingToken,
+    send_recovery_email,
+    send_welcome_email,
+    verify_token,
+)
+from app.services.rate_limit import enforce as rate_limit
+
+router = APIRouter()
+
+BLOCKED_DOMAINS = {
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "icloud.com",
+    "proton.me",
+    "protonmail.com",
+}
+
+
+@router.post("/signup")
+async def signup(
+    payload: TenantSignup,
+    background: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if "@" not in payload.email:
+        raise HTTPException(400, "Invalid email")
+    domain = payload.email.split("@")[-1].lower()
+    if domain in BLOCKED_DOMAINS:
+        raise HTTPException(
+            400, "Work email required (personal email domains not allowed)"
+        )
+    # Throttle per IP (5/hour) AND per email-domain (10/hour). Edge proxies
+    # rewrite client IPs through internal NAT, so an IP-only limit is leaky;
+    # the domain limit catches mass signups against one company regardless of
+    # origin IP.
+    await rate_limit(request, bucket="signup", limit=5, window_seconds=3600)
+    await rate_limit(
+        request,
+        bucket="signup-domain",
+        limit=10,
+        window_seconds=3600,
+        key_suffix=domain,
+        by_ip=False,
+    )
+    existing = await db.execute(select(Tenant).where(Tenant.email == payload.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(400, "Email already registered")
+    tenant = Tenant(name=payload.name, email=payload.email, mode=payload.mode)
+    db.add(tenant)
+    await db.flush()
+    raw, prefix, key_hash = generate_api_key(mode=payload.mode)
+    api_key = ApiKey(
+        tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="default"
+    )
+    db.add(api_key)
+    await db.commit()
+    await db.refresh(tenant)
+
+    # Live tenants get the welcome+verify email. Test workspaces don't —
+    # they're for integration testing, not a real human signup.
+    if tenant.mode == "live":
+        background.add_task(send_welcome_email, tenant, raw)
+
+    return {"tenant_id": tenant.id, "api_key": raw, "mode": tenant.mode}
+
+
+# ── Email verification ────────────────────────────────────────────────
+class VerifyPayload(BaseModel):
+    token: str
+
+
+@router.post("/verify-email")
+async def verify_email(payload: VerifyPayload, db: AsyncSession = Depends(get_db)):
+    try:
+        tenant_id = verify_token(payload.token, expected_purpose="verify")
+    except InvalidOnboardingToken as e:
+        raise HTTPException(400, f"Invalid or expired verification link: {e}") from e
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Workspace not found")
+    if tenant.email_verified_at is None:
+        tenant.email_verified_at = datetime.utcnow()
+        await db.commit()
+    return {
+        "tenant_id": tenant.id,
+        "email": tenant.email,
+        "email_verified_at": tenant.email_verified_at,
+    }
+
+
+# ── API key recovery (magic-link, rotates key) ────────────────────────
+class RecoverRequest(BaseModel):
+    email: str
+
+
+@router.post("/recover/request")
+async def recover_request(
+    payload: RecoverRequest,
+    background: BackgroundTasks,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 1: user enters email → we email them a magic link.
+
+    We always return 204, regardless of whether the email matches a real
+    tenant, so this endpoint cannot be used to enumerate accounts.
+    """
+    # 3 recovery emails per IP per hour. Throttles harassment + cost-bomb.
+    await rate_limit(request, bucket="recover", limit=3, window_seconds=3600)
+    email = (payload.email or "").strip().lower()
+    if "@" not in email:
+        # never reveal whether email exists — always pretend success
+        return {"ok": True}
+    result = await db.execute(select(Tenant).where(Tenant.email == email))
+    tenant = result.scalar_one_or_none()
+    if tenant is not None:
+        background.add_task(send_recovery_email, tenant)
+    return {"ok": True}
+
+
+class RecoverExchange(BaseModel):
+    token: str
+
+
+@router.post("/recover/exchange")
+async def recover_exchange(
+    payload: RecoverExchange, db: AsyncSession = Depends(get_db)
+):
+    """Step 2: dashboard POSTs the token from the magic link. We revoke all
+    existing keys and issue a brand-new one. The new key is returned ONCE."""
+    try:
+        tenant_id = verify_token(payload.token, expected_purpose="recover")
+    except InvalidOnboardingToken as e:
+        raise HTTPException(400, f"Invalid or expired recovery link: {e}") from e
+
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "Workspace not found")
+
+    # revoke every active key on this tenant
+    now = datetime.utcnow()
+    existing = await db.execute(
+        select(ApiKey).where(ApiKey.tenant_id == tenant.id, ApiKey.revoked_at.is_(None))
+    )
+    for k in existing.scalars():
+        k.revoked_at = now
+
+    # issue a new key
+    raw, prefix, key_hash = generate_api_key()
+    db.add(
+        ApiKey(
+            tenant_id=tenant.id, key_hash=key_hash, prefix=prefix, name="recovery"
+        )
+    )
+    await db.commit()
+    return {"tenant_id": tenant.id, "api_key": raw}
+
+
+def _serialize_tenant(t: Tenant) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "email": t.email,
+        "default_approvers": t.default_approvers or [],
+        "email_verified_at": t.email_verified_at,
+        "mode": t.mode,
+        "created_at": t.created_at,
+    }
+
+
+@router.get("/me")
+async def get_me(tenant: Tenant = Depends(get_current_tenant)):
+    """Current tenant settings (default approvers, name, email)."""
+    return _serialize_tenant(tenant)
+
+
+@router.patch("/me")
+async def update_me(
+    payload: TenantSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Update mutable settings on the current tenant (currently: default_approvers)."""
+    if payload.default_approvers is not None:
+        normalized = [a.strip() for a in payload.default_approvers if isinstance(a, str) and a.strip()]
+        for a in normalized:
+            if not _is_supported_approver(a):
+                raise HTTPException(
+                    400,
+                    f"Invalid approver '{a}'. Use email, 'mailto:...', or 'sms:+1...'."
+                )
+        tenant.default_approvers = normalized
+    await db.commit()
+    await db.refresh(tenant)
+    return _serialize_tenant(tenant)
+import hashlib
+import secrets
+
+from fastapi import Depends, Header, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import get_db
+from app.models import ApiKey, Tenant
+
+
+def hash_key(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def generate_api_key(mode: str = "live") -> tuple[str, str, str]:
+    """Issue an API key. mode='live' → sk_live_…, mode='test' → sk_test_…
+
+    Test-mode keys are scoped to a test workspace whose approvals never fire
+    real emails/SMS — see services that gate on tenant.mode.
+    """
+    token_prefix = "sk_test_" if mode == "test" else "sk_live_"
+    raw = f"{token_prefix}{secrets.token_hex(32)}"
+    prefix = raw[:11]
+    return raw, prefix, hash_key(raw)
+
+
+async def get_current_tenant(
+    authorization: [REDACTED] = Header(...),
+    db: AsyncSession = Depends(get_db),
+) -> Tenant:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    raw_key = authorization.split(" ", 1)[1].strip()
+    key_hash = hash_key(raw_key)
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))
+    )
+    api_key = result.scalar_one_or_none()
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    tenant = await db.get(Tenant, api_key.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=401, detail="Tenant not found")
+    # Stamp tenant_id on every subsequent log line in this request
+    from app.logging_setup import bind_request_context
+    bind_request_context(tenant_id=tenant.id, api_key_id=api_key.id)
+    return tenant
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sentinel-api"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sqlalchemy>=2.0",
+    "greenlet>=3.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "twilio>=9.0",
+    "sentry-sdk[fastapi]>=2.0",
+    "structlog>=24.4",
+    "asn1crypto>=1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "aiosqlite>=0.20",
+    "ruff>=0.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["dist", "build", ".venv", "alembic/versions"]
+
+[tool.ruff.lint]
+# TCH omitted: FastAPI resolves endpoint annotations at runtime, so moving
+# imports like AsyncSession into TYPE_CHECKING blocks breaks Depends().
+select = ["E", "F", "W", "I", "B", "C4", "UP", "SIM"]
+ignore = [
+    "E501",  # formatter handles line length
+    "B008",  # FastAPI Depends() in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+"alembic/env.py" = ["E402"]  # alembic imports after sys.path manipulation
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+# Gate raised to 70 in QA-COVERAGE-70 (measured ~80% at the time).
+fail_under = 70
+ARCHITECTURE.md
+zsh:1: no matches found: .venv/bin/python*

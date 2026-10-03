@@ -1,0 +1,443 @@
+"""Webhook management endpoints — CRUD on webhook_endpoints + read deliveries.
+
+Authenticated with the standard per-tenant API key (Authorization: Bearer [REDACTED]
+"""
+from __future__ import annotations
+
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import get_current_tenant
+from app.db import get_db
+from app.models import Tenant, WebhookDelivery, WebhookEndpoint
+from app.services.pagination import paginate_stmt
+from app.services.webhooks import generate_secret
+
+router = APIRouter()
+
+
+ALLOWED_EVENTS = {"approval.approved", "approval.rejected"}
+
+
+class CreateWebhookRequest(BaseModel):
+    url: str
+    description: str | None = None
+    event_filter: list[str] | None = None  # empty/None = all events
+
+
+def _serialize_endpoint(e: WebhookEndpoint, *, include_secret: bool = False) -> dict:
+    out = {
+        "id": e.id,
+        "url": e.url,
+        "description": e.description,
+        "event_filter": e.event_filter or [],
+        "created_at": e.created_at,
+        "disabled_at": e.disabled_at,
+        "last_used_at": e.last_used_at,
+        "last_status_code": e.last_status_code,
+    }
+    if include_secret:
+        out["secret"] = e.secret  # only on creation
+    return out
+
+
+def _serialize_delivery(d: WebhookDelivery) -> dict:
+    return {
+        "id": d.id,
+        "endpoint_id": d.endpoint_id,
+        "event_type": d.event_type,
+        "action_id": d.action_id,
+        "attempt": d.attempt,
+        "status_code": d.status_code,
+        "response_snippet": d.response_snippet,
+        "delivered_at": d.delivered_at,
+        "created_at": d.created_at,
+    }
+
+
+@router.post("")
+async def create_webhook(
+    payload: CreateWebhookRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Register a new webhook endpoint. The `secret` is returned ONCE — store it,
+    we don't expose it again. Customer uses it to verify HMAC signatures."""
+    if not payload.url.startswith(("https://", "http://")):
+        raise HTTPException(400, "url must start with https:// (or http:// for localhost)")
+    if payload.event_filter:
+        bad = [e for e in payload.event_filter if e not in ALLOWED_EVENTS]
+        if bad:
+            raise HTTPException(
+                400,
+                f"Unknown event(s): {bad}. Allowed: {sorted(ALLOWED_EVENTS)}",
+            )
+
+    secret = generate_secret()
+    endpoint = WebhookEndpoint(
+        tenant_id=tenant.id,
+        url=payload.url,
+        secret=secret,
+        description=payload.description,
+        event_filter=payload.event_filter or None,
+    )
+    db.add(endpoint)
+    await db.commit()
+    await db.refresh(endpoint)
+    return _serialize_endpoint(endpoint, include_secret=True)
+
+
+@router.get("")
+async def list_webhooks(
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """List this tenant's webhook endpoints. Secrets are NOT included."""
+    result = await db.execute(
+        select(WebhookEndpoint)
+        .where(WebhookEndpoint.tenant_id == tenant.id)
+        .order_by(desc(WebhookEndpoint.created_at))
+    )
+    return [_serialize_endpoint(e) for e in result.scalars()]
+
+
+@router.delete("/{endpoint_id}")
+async def disable_webhook(
+    endpoint_id: str,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Soft-disable an endpoint (we keep its delivery history for audit)."""
+    endpoint = await db.get(WebhookEndpoint, endpoint_id)
+    if endpoint is None or endpoint.tenant_id != tenant.id:
+        raise HTTPException(404, "Webhook not found")
+    if endpoint.disabled_at is None:
+        endpoint.disabled_at = datetime.utcnow()
+        await db.commit()
+    return {"id": endpoint.id, "disabled_at": endpoint.disabled_at}
+
+
+@router.get("/deliveries")
+async def list_deliveries(
+    endpoint_id: str | None = Query(None),
+    limit: int | None = Query(None, ge=1, le=200),
+    cursor: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Inspect webhook deliveries for this tenant.
+
+    Backward-compatible: no limit + no cursor → legacy top-50 bare array.
+    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+    """
+    base = select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant.id)
+    if endpoint_id:
+        base = base.where(WebhookDelivery.endpoint_id == endpoint_id)
+
+    if limit is None and cursor is None:
+        stmt = base.order_by(
+            desc(WebhookDelivery.created_at), desc(WebhookDelivery.id)
+        ).limit(50)
+        result = await db.execute(stmt)
+        return [_serialize_delivery(d) for d in result.scalars()]
+
+    page = await paginate_stmt(
+        db, base, WebhookDelivery, limit=limit or 50, cursor=cursor
+    )
+    return {
+        "data": [_serialize_delivery(d) for d in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }
+        "decided_by": approval.decided_by,
+        "decided_at": approval.decided_at.isoformat() + "Z" if approval.decided_at else None,
+        "reason": approval.reason,
+    }
+
+
+async def dispatch_approval_webhook(
+    db: AsyncSession, approval: Approval
+) -> None:
+    """Look up all webhook endpoints for this tenant subscribed to the event,
+    fire each one as a background task (best-effort with retries)."""
+    event_type = _event_type_for(approval)
+    if event_type is None:
+        return
+
+    result = await db.execute(
+        select(WebhookEndpoint).where(
+            WebhookEndpoint.tenant_id == approval.tenant_id,
+            WebhookEndpoint.disabled_at.is_(None),
+        )
+    )
+    endpoints = [e for e in result.scalars() if _matches_filter(e, event_type)]
+    if not endpoints:
+        return
+
+    for endpoint in endpoints:
+        # Spawn each delivery as its own task — never block the caller.
+        _track(asyncio.create_task(_deliver_with_retries(endpoint, event_type, approval)))
+
+
+async def _deliver_with_retries(
+    endpoint: WebhookEndpoint, event_type: str, approval: Approval
+) -> None:
+    """Run in a background task. Owns its own DB session to avoid lifecycle issues."""
+    from app.db import SessionLocal
+
+    delivery_id = f"whd_{secrets.token_hex(8)}"
+    payload = _build_payload(event_type, approval, delivery_id)
+    raw_body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    signature = sign_body(endpoint.secret, raw_body)
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Sentinel-Webhook/1.0",
+        SIGNATURE_HEADER: signature,
+        EVENT_HEADER: event_type,
+        ID_HEADER: delivery_id,
+    }
+
+    last_status: int | None = None
+    last_snippet: str | None = None
+    success = False
+
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                r = await client.post(endpoint.url, content=raw_body, headers=headers)
+                last_status = r.status_code
+                last_snippet = (r.text or "")[:512]
+                if 200 <= r.status_code < 300:
+                    success = True
+                    break
+                # 4xx (except 408/429) — don't retry, the customer rejected us
+                if 400 <= r.status_code < 500 and r.status_code not in (408, 429):
+                    break
+            except httpx.RequestError as e:
+                last_snippet = f"{type(e).__name__}: {str(e)[:400]}"
+            if attempt < MAX_ATTEMPTS:
+                await asyncio.sleep(BACKOFF_SECONDS[attempt - 1])
+
+    # Record delivery + bump endpoint last-used/status
+    try:
+        async with SessionLocal() as db2:
+            db2.add(
+                WebhookDelivery(
+                    id=delivery_id,
+                    endpoint_id=endpoint.id,
+                    tenant_id=endpoint.tenant_id,
+                    event_type=event_type,
+                    action_id=approval.id,
+                    payload=payload,
+                    attempt=attempt,
+                    status_code=last_status,
+                    response_snippet=last_snippet,
+                    delivered_at=datetime.utcnow() if success else None,
+                )
+            )
+            ep = await db2.get(WebhookEndpoint, endpoint.id)
+            if ep is not None:
+                ep.last_used_at = datetime.utcnow()
+                ep.last_status_code = last_status
+            await db2.commit()
+    except Exception:
+        log.exception("Failed to record webhook delivery for endpoint %s", endpoint.id)
+from test_support import TENANT_ID, client_for, make_sqlite_session, run
+
+from app.models import ApproverContact
+from app.services.contacts import destination_hash, normalize_phone_number
+
+
+def test_create_approval_rejects_unregistered_sms_approver():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            response = client.post(
+                "/v1/approvals",
+                json={
+                    "function_name": "transfer_funds",
+                    "arguments": {"amount": 1000},
+                    "risk_level": "high",
+                    "approvers": ["sms:+15551234567"],
+                    "timeout_seconds": 300,
+                },
+            )
+
+        assert response.status_code == 400
+        assert "active sms consent" in response.json()["detail"].lower()
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_create_approval_rejects_revoked_sms_approver():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        phone = normalize_phone_number("+15551234567")
+        session.add(
+            ApproverContact(
+                tenant_id=TENANT_ID,
+                channel="sms",
+                destination=phone,
+                destination_hash=destination_hash(phone),
+                destination_last4=phone[-4:],
+                display_name="Chris",
+                consent_status="revoked",
+                consent_source="dashboard",
+            )
+        )
+        run(session.commit())
+
+        with client_for(session, tenant) as client:
+            response = client.post(
+                "/v1/approvals",
+                json={
+                    "function_name": "transfer_funds",
+                    "arguments": {"amount": 1000},
+                    "risk_level": "high",
+                    "approvers": ["sms:+15551234567"],
+                    "timeout_seconds": 300,
+                },
+            )
+
+        assert response.status_code == 400
+        assert "active sms consent" in response.json()["detail"].lower()
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_create_approval_accepts_active_sms_contact(monkeypatch):
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        async def noop_dispatch(approval, tenant, db=None):
+            return None
+
+        monkeypatch.setattr("app.services.approval_service.dispatch_approval_notifications", noop_dispatch)
+
+        with client_for(session, tenant) as client:
+            contact_response = client.post(
+                "/v1/approver-contacts",
+                json={
+                    "channel": "sms",
+                    "phone_number": "+15551234567",
+                    "display_name": "Chris",
+                    "consent_attested": True,
+                    "consent_source": "dashboard",
+                },
+            )
+            assert contact_response.status_code == 200
+
+            response = client.post(
+                "/v1/approvals",
+                json={
+                    "function_name": "transfer_funds",
+                    "arguments": {"amount": 1000},
+                    "risk_level": "high",
+                    "approvers": ["sms:+15551234567"],
+                    "timeout_seconds": 300,
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "pending"
+    finally:
+        run(session.close())
+        run(engine.dispose())
+            resp = client.post("/v1/tenants/recover/request", json={"email": "bogus"})
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_recover_request_known_email_queues_email():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post(
+                "/v1/tenants/recover/request", json={"email": tenant.email}
+            )
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_recover_exchange_rotates_keys():
+    engine, session, tenant = run(make_sqlite_session())
+    # seed an existing active key
+    old = ApiKey(tenant_id=tenant.id, key_hash="h", prefix="sk_old", name="default")
+    session.add(old)
+    run(session.commit())
+    token = create_token("recover", tenant.id, ttl_seconds=3600)
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post("/v1/tenants/recover/exchange", json={"token": token})
+        assert resp.status_code == 200
+        assert resp.json()["api_key"]
+        # old key revoked, new "recovery" key issued
+        rows = run(session.execute(select(ApiKey).where(ApiKey.tenant_id == tenant.id)))
+        keys = rows.scalars().all()
+        old_row = next(k for k in keys if k.name == "default")
+        assert old_row.revoked_at is not None
+        assert any(k.name == "recovery" and k.revoked_at is None for k in keys)
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_recover_exchange_rejects_bad_token():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            resp = client.post(
+                "/v1/tenants/recover/exchange", json={"token": "garbage.sig"}
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(
+            [
+                "id",
+                "action_id",
+                "created_at_utc",
+                "execution_result_json",
+                "error",
+                "prev_hash",
+                "event_hash",
+            ]
+        )
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        for e in rows:
+            writer.writerow(
+                [
+                    e.id,
+                    e.action_id,
+                    e.created_at.isoformat() if e.created_at else "",
+                    json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
+                    e.error or "",
+                    e.prev_hash or "",
+                    e.event_hash or "",
+                ]
+            )
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="audit-{tenant.id}.csv"',
+        },
+    )

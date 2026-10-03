@@ -1,0 +1,891 @@
+/opt/homebrew/bin/npx
+npm error code EPERM
+npm error syscall open
+npm error path /Users/sellers/.npm/_cacache/tmp/***
+npm error errno EPERM
+npm error
+npm error Your cache folder contains root-owned files, due to a bug in previous versions of npm which has since been addressed.
+npm error
+npm error To permanently fix this problem, please run:
+npm error   sudo chown -R 501:20 "/Users/sellers/.npm"
+npm error Log files were not written due to an error writing to the directory: /Users/sellers/.npm/_logs
+npm error You can rerun the command with `--loglevel=verbose` to see the logs in your terminal
+# Contributing to Sentinel API
+
+## Setup
+
+```bash
+git clone https://github.com/PetrefiedThunder/sentinel-api
+cd sentinel-api
+uv venv && source .venv/bin/activate
+uv sync
+pre-commit install
+```
+
+You need Postgres ≥ 15 and Redis ≥ 6 running locally:
+
+```bash
+createdb sentinel
+export DATABASE_URL="postgresql+asyncpg://localhost/sentinel"
+export REDIS_URL="redis://localhost:6379/0"
+export JWT_SECRET="$(openssl rand -hex 32)"
+
+alembic upgrade head
+uvicorn app.main:app --reload
+```
+
+## Running tests
+
+```bash
+pytest -q                                  # all tests
+pytest tests/test_approvals.py -v          # one file
+pytest -k "rejection"                      # by name pattern
+```
+
+## Migrations
+
+```bash
+# create
+alembic revision -m "your change"          # edits the file by hand
+# apply
+alembic upgrade head
+# round-trip test before pushing
+alembic downgrade -1 && alembic upgrade head
+```
+
+**Migration rules:**
+
+- Sequential numeric prefix: `007_<short_name>.py`
+- `revision = "007"` and `down_revision = "006"` — strings must match exactly
+- One logical change per migration
+- All migrations must be reversible (`downgrade()` implemented)
+- Test round-trip locally before pushing
+
+## Pull requests
+
+1. Open an issue first if it's a behavior change
+2. Small, focused PRs
+3. Add tests
+4. `pytest` + `ruff check .` must pass (pre-commit enforces this)
+5. Document any new env var in README.md
+6. If you add a migration, link to it in the PR description
+
+## Release process
+
+The API is continuously deployed from `main`. There is no version tag — every merge to `main` is the new production version. If you need a hotfix, push to `main` and watch Railway auto-deploy.
+
+## Security
+
+See [`SECURITY.md`](SECURITY.md). Never file a public issue for a vulnerability.
+
+## Code style
+
+- Python 3.11+
+- Type hints required on all public APIs (`mypy` in pre-commit)
+- `ruff` for lint + format (config in `pyproject.toml`)
+- Async-first (`async def` for any DB-touching code)
+
+## Code of conduct
+
+Be excellent. Harassment, discrimination, or bigotry → removed from the project.
+# Sentinel — system architecture
+
+Last updated: 2026-05-26
+
+## At a glance
+
+Sentinel pauses execution of risky AI-agent actions until a human approves. The product is a 5-repo system: 2 SDKs, 1 API, 1 dashboard, 1 marketing site, plus a public examples repo.
+
+```
+            ┌────────────────────────────────────────────────┐
+            │  Agent application (customer-owned)            │
+            │  • Python @oversight or TS oversight() wrapper │
+            │  • Or LangChain / CrewAI / AutoGen / Anthropic │
+            │    / Mastra callback handler                   │
+            └──────────────────┬─────────────────────────────┘
+                               │ HTTPS, Bearer sk_live_…
+                               │ POST /v1/approvals
+                               ▼
+            ┌────────────────────────────────────────────────┐
+            │  Vercel edge (api.pauseapi.app)                │
+            │  • TLS termination, geo-distributed            │
+            │  • Reverse-proxy to Railway origin             │
+            └──────────────────┬─────────────────────────────┘
+                               ▼
+            ┌────────────────────────────────────────────────┐
+            │  sentinel-api (Railway, us-east, FastAPI)      │
+            │  ┌──────────────────────────────────────────┐  │
+            │  │ Postgres (Railway) — approvals, tenants, │  │
+            │  │ audit log (hash-chain), webhooks         │  │
+            │  └──────────────────────────────────────────┘  │
+            │  ┌──────────────────────────────────────────┐  │
+            │  │ Redis (Railway) — rate limit counters,   │  │
+            │  │ in-process decision bus                  │  │
+            │  └──────────────────────────────────────────┘  │
+            │                                                │
+            │  notifications.py ──► Resend HTTP (email)      │
+            │                  ──► Twilio HTTP (SMS)         │
+            │  webhooks.py     ──► customer URL (HMAC POST)  │
+            │  billing.py      ──► Stripe HTTP (Checkout)    │
+            └─────┬─────────────────────────────────────┬────┘
+                  │ LISTEN/NOTIFY                       │
+                  │ (sub-100 ms decision propagation)   │
+                  │                                     │
+       ┌──────────▼──────────┐               ┌──────────▼─────────┐
+       │ Agent's blocking    │               │ sentinel-dashboard │
+       │ wait_for_decision() │               │ (Vercel, Next.js)  │
+       └─────────────────────┘               │ app.pauseapi.app   │
+                                             └────────────────────┘
+                                                       ▲
+                                                       │
+                                             ┌─────────┴──────────┐
+                                             │ oversight-landing  │
+                                             │ (Vercel, Next.js)  │
+                                             │ pauseapi.app       │
+                                             └────────────────────┘
+```
+
+## Repository roles
+
+| Repo | Lang | Role |
+|---|---|---|
+| **sentinel-sdk** | Python | `@oversight` decorator, `SentinelClient`. Adapters for LangChain, CrewAI, AutoGen, Anthropic Claude. PyPI: `sentinel-oversight`. |
+| **sentinel-sdk-js** | TypeScript | `oversight()` wrapper, `SentinelClient`. Adapters for LangChain.js, Mastra. npm: `sentinel-oversight`. |
+| **sentinel-api** | Python | FastAPI backend. This repo. Public API at `api.pauseapi.app`. |
+| **sentinel-dashboard** | TypeScript | Next.js dashboard at `app.pauseapi.app`. Read/write tenant data using the same API key the SDK uses. |
+| **oversight-landing** | TypeScript | Next.js marketing + docs + status at `pauseapi.app`. No tenant data. |
+| **sentinel-examples** | Mixed | Runnable code: Python demo, LangChain.js demo, webhook receiver. Public. |
+
+## Approval lifecycle
+
+```
+1. Agent calls a function wrapped with @oversight / oversight()
+2. SDK POSTs /v1/approvals with function_name + arguments + risk_level + approvers
+3. API persists Approval row → status=pending
+4. API fires notifications:
+   • Resend email with magic-link Approve/Reject buttons
+   • Twilio SMS (if any sms:+1… approvers + valid consent contact)
+5. SDK long-polls /v1/approvals/{id}/wait
+   • API blocks on Postgres LISTEN sentinel_decisions
+6. Human clicks Approve/Reject in email → POST /v1/approvals/{id}/token-decision
+   • API verifies HMAC-signed token, updates row, NOTIFIES the channel
+7. SDK's wait unblocks (sub-100 ms after the click)
+8. If approved → SDK returns control to wrapped function which executes
+   If rejected → SDK raises ApprovalRejected
+   If no decision before timeout → SDK raises ApprovalTimeout
+9. API fires webhooks to every customer-registered endpoint:
+   • HMAC-SHA256 signed POST, 3-attempt exponential backoff retries
+10. Hash-chained audit event appended for every state change
+```
+
+## Key invariants
+
+- **Magic-link tokens are scoped to one `action_id`** and expire with the approval's `timeout_seconds`. Cannot approve any other action even if leaked.
+- **Audit log is append-only, hash-chained.** `event_hash = sha256(prev_hash + canonical_json(payload))`. Verifiable offline.
+- **API keys are stored as hash, never plaintext.** Raw value shown ONCE on signup or via the recover/exchange flow.
+- **Webhook secrets are stored plaintext (intentional)** — they're per-tenant, per-endpoint, and only used to sign outbound POSTs. If the DB is compromised, attacker can spoof webhook deliveries to that specific customer; we accept this trade-off vs. the operational pain of derived-key schemes.
+- **Per-tenant default approvers** resolve in order: caller's explicit list → `tenant.default_approvers` → global `DEFAULT_APPROVERS` env var → 400 error.
+- **Email-verified state is informational, not enforced.** A tenant can use Sentinel before verifying email. We track `email_verified_at` so a future "verified Pro plan only" gate is possible.
+
+## Hosting topology
+
+| Surface | Host | Region | Why |
+|---|---|---|---|
+| `pauseapi.app` (landing + docs) | Vercel | global edge | static + ISR; low TTFB everywhere |
+| `app.pauseapi.app` (dashboard) | Vercel | global edge | Next.js SSR |
+| `api.pauseapi.app` (API origin) | Vercel proxy → Railway | us-east | edge TLS in front of single-region origin saves the cross-region round-trip on TLS handshake |
+| Postgres | Railway | us-east | colocated with API |
+| Redis | Railway | us-east | rate limit counters; tolerable to lose |
+
+## Data flows
+
+### Approval creation (write-heavy path)
+
+```
+SDK -POST-> Vercel edge -proxy-> Railway -INSERT-> Postgres
+                                      └-async-> Resend HTTP / Twilio HTTP
+                                      └-INSERT-> audit_events
+```
+
+p50: 53 ms POST → 201
+p95: 84 ms
+
+### Decision propagation (latency-critical)
+
+```
+Approver clicks Approve  → Browser POST /v1/approvals/.../token-decision
+                          → Railway UPDATE Postgres
+                          → Postgres NOTIFY sentinel_decisions
+                          → Railway LISTEN handler resolves the SDK's wait
+                          → SDK returns from wait_for_decision()
+```
+
+Click-to-unblock: p99 < 130 ms.
+
+### Webhook fan-out (async, retryable)
+
+```
+Decision happens → background task per registered endpoint:
+                   attempt 1 → POST customer URL with HMAC sig
+                   if 5xx or network error → sleep 1s → attempt 2
+                                          → sleep 4s → attempt 3
+                                          → record terminal failure
+                   if 2xx → record success
+                   if 4xx (except 408/429) → record terminal rejection
+```
+
+Webhook deliveries never block the decision endpoint return.
+
+## Multi-tenancy model
+
+- One workspace = one `tenants` row
+- Per-tenant: API keys, approvals, audit events, webhook endpoints, SMS consent contacts, billing state
+- Row-level scoping enforced at the application layer via `tenant: Tenant = Depends(get_current_tenant)` on every authenticated endpoint
+- Admin endpoints (`/v1/admin/*`) bypass tenant scoping but require `ADMIN_TOKEN` instead of an API key
+
+## Deploy topology
+
+```
+git push origin main
+   ├─► sentinel-api    → Railway auto-deploy (build + alembic upgrade + uvicorn)
+   ├─► sentinel-dash   → Vercel auto-deploy
+   ├─► oversight-land  → Vercel auto-deploy
+   └─► sentinel-sdk    → no deploy; on tag v* → GH Actions → PyPI Trusted Publishing
+   └─► sentinel-sdk-js → no deploy; on tag v* → GH Actions → npm Trusted Publishing
+```
+
+No staging. Single prod environment. (Tier 3 todo: add staging Railway service + branch policy.)
+
+## What we don't have yet (intentional)
+
+- **No SSO** — paste-an-API-key auth. Good enough for design partners.
+- **No quota enforcement on the free tier** — column exists, enforcement waits until usage data tells us the right cap.
+- **No customer-facing self-serve cancellation portal** — Stripe Customer Portal is 5 min to wire up when a customer asks.
+- **No multi-region failover** — single Railway us-east origin. Latency is good enough thanks to the edge proxy.
+
+## Future architectural moves
+
+- Generate JS + TS API clients from `/openapi.json` (eliminate hand-rolled types in dashboard + JS SDK)
+- structlog JSON logging with per-request trace id
+- Staging Railway environment
+- Webhook delivery queue durability (currently in-process `asyncio.create_task`; if the container dies mid-delivery, retries are lost — should move to durable queue, e.g. Postgres-backed)
+- ADR series under `docs/adr/` documenting decisions like the 5-repo split, HMAC token format, audit-chain layout
+     1	import asyncio
+     2	from datetime import UTC, datetime
+     3	
+     4	from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+     5	from sqlalchemy import select
+     6	from sqlalchemy.exc import IntegrityError
+     7	from sqlalchemy.ext.asyncio import AsyncSession
+     8	
+     9	from app.auth import get_current_tenant
+    10	from app.db import get_db
+    11	from app.models import Approval, Tenant
+    12	from app.schemas import ApprovalCreate, DecisionRequest, TokenDecisionRequest
+    13	from app.services.approval_service import create_approval
+    14	from app.services.approval_tokens import InvalidApprovalToken, verify_decision_token
+    15	from app.services.audit_log import append_audit_event
+    16	from app.services.contacts import find_active_sms_contact, sms_approver_phone
+    17	from app.services.decision_bus import bus, notify_decision
+    18	from app.services.idempotency import run_with_idempotency
+    19	from app.services.nonce_store import is_nonce_consumed, mark_nonce_consumed, token_nonce
+    20	from app.services.pagination import paginate_stmt
+    21	from app.services.webhooks import dispatch_approval_webhook
+    22	
+    23	router = APIRouter()
+    24	
+    25	
+    26	def _utcnow():
+    27	    return datetime.now(UTC).replace(tzinfo=None)
+    28	
+    29	
+    30	async def _rollback_or_reraise_integrity_error(db, error: IntegrityError) -> None:
+    31	    """Clean up an integrity failure without hiding it behind cleanup errors."""
+    32	    try:
+    33	        await db.rollback()
+    34	    except asyncio.CancelledError:
+    35	        raise
+    36	    except Exception:
+    37	        raise error from None
+    38	
+    39	
+    40	def _serialize(a: Approval) -> dict:
+    41	    return {
+    42	        "action_id": a.id,
+    43	        "id": a.id,
+    44	        "tenant_id": a.tenant_id,
+    45	        "function_name": a.function_name,
+    46	        "arguments": a.arguments,
+    47	        "risk_level": a.risk_level,
+    48	        "approvers": a.approvers,
+    49	        "timeout_seconds": a.timeout_seconds,
+    50	        "decision": a.decision,
+    51	        "status": a.decision,
+    52	        "decided_by": a.decided_by,
+    53	        "decided_at": a.decided_at,
+    54	        "reason": a.reason,
+    55	        "created_at": a.created_at,
+    56	    }
+    57	
+    58	
+    59	@router.post("")
+    60	async def create(
+    61	    payload: ApprovalCreate,
+    62	    background_tasks: BackgroundTasks,
+    63	    db: AsyncSession = Depends(get_db),
+    64	    tenant: Tenant = Depends(get_current_tenant),
+    65	    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    66	):
+    67	    """Create an approval. Pass `Idempotency-Key: <opaque>` to make retries
+    68	    safe — the same key replays the original response without firing
+    69	    duplicate emails or creating duplicate rows."""
+    70	
+    71	    async def _do_create() -> dict:
+    72	        for approver in payload.approvers:
+    73	            phone = sms_approver_phone(approver)
+    74	            if phone and not await find_active_sms_contact(db, tenant.id, phone):
+    75	                raise HTTPException(
+    76	                    400, "SMS approver requires active SMS consent contact"
+    77	                )
+    78	        approval = await create_approval(
+    79	            db, tenant, payload, background_tasks=background_tasks
+    80	        )
+    81	        return {
+    82	            "action_id": approval.id,
+    83	            "status": approval.decision,
+    84	            **_serialize(approval),
+    85	        }
+    86	
+    87	    return await run_with_idempotency(
+    88	        db,
+    89	        tenant_id=tenant.id,
+    90	        idempotency_key=idempotency_key,
+    91	        method="POST",
+    92	        path="/v1/approvals",
+    93	        request_body=payload.model_dump(),
+    94	        handler=_do_create,
+    95	    )
+    96	
+    97	
+    98	@router.get("")
+    99	async def list_approvals(
+   100	    status: str | None = None,
+   101	    limit: int | None = Query(None, ge=1, le=100),
+   102	    cursor: str | None = Query(None),
+   103	    db: AsyncSession = Depends(get_db),
+   104	    tenant: Tenant = Depends(get_current_tenant),
+   105	):
+   106	    """List approvals.
+   107	
+   108	    Backward-compatible: with no `limit` and no `cursor`, returns the legacy
+   109	    top-200 bare array. With either present, returns the cursor-paginated
+   110	    envelope {data, has_more, next_cursor}.
+   111	    """
+   112	    base = select(Approval).where(Approval.tenant_id == tenant.id)
+   113	    if status:
+   114	        base = base.where(Approval.decision == status)
+   115	
+   116	    if limit is None and cursor is None:
+   117	        # Legacy shape — don't break existing SDK clients
+   118	        stmt = base.order_by(Approval.created_at.desc(), Approval.id.desc()).limit(200)
+   119	        result = await db.execute(stmt)
+   120	        return [_serialize(a) for a in result.scalars().all()]
+   121	
+   122	    page = await paginate_stmt(db, base, Approval, limit=limit or 50, cursor=cursor)
+   123	    return {
+   124	        "data": [_serialize(a) for a in page.items],
+   125	        "has_more": page.has_more,
+   126	        "next_cursor": page.next_cursor,
+   127	    }
+   128	
+   129	
+   130	@router.get("/{action_id}/wait")
+   131	async def wait_for_decision(
+   132	    action_id: str,
+   133	    timeout: float = Query(30, ge=1, le=300, description="Seconds to wait for a decision"),
+   134	    db: AsyncSession = Depends(get_db),
+   135	    tenant: Tenant = Depends(get_current_tenant),
+   136	):
+   137	    """Long-poll for a decision. Uses Postgres LISTEN/NOTIFY for sub-100ms
+   138	    detection, with a 100ms DB fallback poll to handle missed notifications.
+   139	    """
+   140	    approval = await db.get(Approval, action_id)
+   141	    if not approval or approval.tenant_id != tenant.id:
+   142	        raise HTTPException(404, "Not found")
+   143	    if approval.decision != "pending":
+   144	        return _serialize(approval)
+   145	
+   146	    deadline = asyncio.get_event_loop().time() + timeout
+   147	    poll_interval = 0.1
+   148	    # Race: NOTIFY-wait against a poll loop. Whichever wakes first wins.
+   149	    while True:
+   150	        remaining = deadline - asyncio.get_event_loop().time()
+   151	        if remaining <= 0:
+   152	            return _serialize(approval)
+   153	        wait_window = min(remaining, 5.0)  # cap each NOTIFY-wait at 5s
+   154	        notify_task = asyncio.create_task(bus.wait_for(action_id, wait_window))
+   155	        poll_task = asyncio.create_task(asyncio.sleep(poll_interval))
+   156	        done, pending = await asyncio.wait(
+   157	            {notify_task, poll_task}, return_when=asyncio.FIRST_COMPLETED
+   158	        )
+   159	        for t in pending:
+   160	            t.cancel()
+   161	        await db.refresh(approval)
+   162	        if approval.decision != "pending":
+   163	            return _serialize(approval)
+   164	
+   165	
+   166	@router.get("/{action_id}")
+   167	async def get_approval(
+   168	    action_id: str,
+   169	    db: AsyncSession = Depends(get_db),
+   170	    tenant: Tenant = Depends(get_current_tenant),
+   171	):
+   172	    approval = await db.get(Approval, action_id)
+   173	    if not approval or approval.tenant_id != tenant.id:
+   174	        raise HTTPException(404, "Not found")
+   175	    return _serialize(approval)
+   176	
+   177	
+   178	@router.post("/{action_id}/decision")
+   179	async def decide(
+   180	    action_id: str,
+   181	    payload: DecisionRequest,
+   182	    db: AsyncSession = Depends(get_db),
+   183	    tenant: Tenant = Depends(get_current_tenant),
+   184	):
+   185	    tenant_id = tenant.id
+   186	    try:
+   187	        approval = await db.scalar(
+   188	            select(Approval)
+   189	            .where(Approval.id == action_id, Approval.tenant_id == tenant_id)
+   190	            # key_share=True without read=True renders FOR NO KEY UPDATE on
+   191	            # PostgreSQL: serialize decisions without blocking audit FK checks.
+   192	            .with_for_update(key_share=True)
+   193	            .execution_options(populate_existing=True)
+   194	        )
+   195	        if not approval:
+   196	            raise HTTPException(404, "Not found")
+   197	        if approval.decision != "pending":
+   198	            raise HTTPException(400, f"Already {approval.decision}")
+   199	        if payload.decision not in ("approved", "rejected"):
+   200	            raise HTTPException(400, "decision must be 'approved' or 'rejected'")
+   201	        approval.decision = payload.decision
+   202	        approval.decided_by = payload.decided_by
+   203	        approval.decided_at = _utcnow()
+   204	        approval.reason = payload.reason
+   205	        await append_audit_event(
+   206	            db, tenant_id, action_id, f"decision:{payload.decision}", commit=False
+   207	        )
+   208	        await db.commit()
+   209	    except BaseException:
+   210	        await db.rollback()
+   211	        raise
+   212	    await db.refresh(approval)
+   213	    await notify_decision(db, approval.id)
+   214	    await dispatch_approval_webhook(db, approval)
+   215	    return _serialize(approval)
+   216	
+   217	
+   218	@router.post("/{action_id}/token-decision")
+   219	async def decide_with_token(
+   220	    action_id: str,
+   221	    payload: TokenDecisionRequest,
+   222	    db: AsyncSession = Depends(get_db),
+   223	):
+   224	    try:
+   225	        decision = verify_decision_token(payload.token, action_id)
+   226	    except (InvalidApprovalToken, ValueError):
+   227	        raise HTTPException(401, "Invalid or expired approval token") from None
+   228	
+   229	    # Replay protection: each token is single-use, tracked server-side
+   230	    # (persisted, so it survives restarts and any approval-state changes).
+   231	    nonce = token_nonce(payload.token)
+   232	    try:
+   233	        if await is_nonce_consumed(db, nonce):
+   234	            raise HTTPException(409, "Approval token already used")
+   235	        approval = await db.scalar(
+   236	            select(Approval)
+   237	            .where(Approval.id == action_id)
+   238	            # FOR NO KEY UPDATE keeps audit FK reads compatible with this lock.
+   239	            .with_for_update(key_share=True)
+   240	            .execution_options(populate_existing=True)
+   241	        )
+   242	        if not approval:
+   243	            raise HTTPException(404, "Not found")
+   244	        # The same token may have committed while this request waited for the
+   245	        # approval lock. Preserve 409 for replay, 400 for a different token.
+   246	        if await is_nonce_consumed(db, nonce):
+   247	            raise HTTPException(409, "Approval token already used")
+   248	        if approval.decision != "pending":
+   249	            raise HTTPException(400, f"Already {approval.decision}")
+   250	
+   251	        approval.decision = decision
+   252	        approval.decided_by = "signed_link"
+   253	        approval.decided_at = _utcnow()
+   254	        approval.reason = "Signed approval link"
+   255	        mark_nonce_consumed(db, nonce, action_id)
+   256	        await append_audit_event(
+   257	            db, approval.tenant_id, action_id, f"decision:{decision}", commit=False
+   258	        )
+   259	        await db.commit()
+   260	    except IntegrityError as error:
+   261	        await _rollback_or_reraise_integrity_error(db, error)
+   262	        # Audit failures are not necessarily nonce conflicts. Check the exact
+   263	        # nonce after rollback before translating a constraint error to 409.
+   264	        try:
+   265	            consumed = await is_nonce_consumed(db, nonce)
+   266	        except asyncio.CancelledError:
+   267	            raise
+   268	        except Exception:
+   269	            await _rollback_or_reraise_integrity_error(db, error)
+   270	            raise error from None
+   271	        await _rollback_or_reraise_integrity_error(db, error)
+   272	        if consumed:
+   273	            raise HTTPException(409, "Approval token already used") from None
+   274	        raise
+   275	    except BaseException:
+   276	        await db.rollback()
+   277	        raise
+   278	    await db.refresh(approval)
+   279	    await notify_decision(db, approval.id)
+   280	    await dispatch_approval_webhook(db, approval)
+   281	    return _serialize(approval)
+     1	from datetime import datetime
+     2	from typing import Any
+     3	
+     4	from pydantic import BaseModel, ConfigDict, field_validator
+     5	
+     6	VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
+     7	APPROVER_HELP = (
+     8	    "approvers must be a non-empty list. "
+     9	    "Use email (e.g. 'alice@acme.com'), 'mailto:alice@acme.com', or 'sms:+15551234567'."
+    10	)
+    11	
+    12	
+    13	def _is_supported_approver(value: str) -> bool:
+    14	    if value.startswith("sms:"):
+    15	        return bool(value[len("sms:"):].strip())
+    16	    if value.startswith("mailto:"):
+    17	        return "@" in value[len("mailto:"):]
+    18	    return "@" in value and ":" not in value.split("@", 1)[0]
+    19	
+    20	
+    21	class TenantSignup(BaseModel):
+    22	    name: str
+    23	    email: str
+    24	    mode: str = "live"  # "live" | "test" — test workspaces never fire real email/SMS
+    25	
+    26	    @field_validator("mode")
+    27	    @classmethod
+    28	    def _valid_mode(cls, v: str) -> str:
+    29	        if v not in ("live", "test"):
+    30	            raise ValueError("mode must be 'live' or 'test'")
+    31	        return v
+    32	
+    33	
+    34	class TenantSignupResponse(BaseModel):
+    35	    tenant_id: str
+    36	    api_key: str
+    37	
+    38	
+    39	class ApprovalCreate(BaseModel):
+    40	    function_name: str
+    41	    arguments: dict[str, Any] = {}
+    42	    risk_level: str = "medium"
+    43	    approvers: list[str] = []
+    44	    timeout_seconds: int = 300
+    45	
+    46	    @field_validator("approvers")
+    47	    @classmethod
+    48	    def _validate_approvers(cls, v: list[str]) -> list[str]:
+    49	        """Strip whitespace + format-check; empty list is OK here (per-tenant
+    50	        / global defaults are applied in the service layer where we have
+    51	        tenant context)."""
+    52	        approvers = [x.strip() for x in v if isinstance(x, str) and x.strip()]
+    53	        if any(not _is_supported_approver(a) for a in approvers):
+    54	            raise ValueError(APPROVER_HELP)
+    55	        return approvers
+    56	
+    57	    @field_validator("risk_level")
+    58	    @classmethod
+    59	    def _valid_risk(cls, v: str) -> str:
+    60	        if v not in VALID_RISK_LEVELS:
+    61	            raise ValueError(f"risk_level must be one of {sorted(VALID_RISK_LEVELS)}")
+    62	        return v
+    63	
+    64	    @field_validator("timeout_seconds")
+    65	    @classmethod
+    66	    def _positive_timeout(cls, v: int) -> int:
+    67	        if v < 1 or v > 86400:
+    68	            raise ValueError("timeout_seconds must be between 1 and 86400")
+    69	        return v
+    70	
+    71	
+    72	class ApprovalResponse(BaseModel):
+    73	    model_config = ConfigDict(from_attributes=True)
+    74	
+    75	    id: str
+    76	    tenant_id: str
+    77	    function_name: str
+    78	    arguments: dict[str, Any] | None = None
+    79	    risk_level: str
+    80	    approvers: list[str] | None = None
+    81	    timeout_seconds: int
+    82	    decision: str
+    83	    decided_by: str | None = None
+    84	    decided_at: datetime | None = None
+    85	    reason: str | None = None
+    86	    created_at: datetime
+    87	
+    88	
+    89	class DecisionRequest(BaseModel):
+    90	    decision: str
+    91	    decided_by: str
+    92	    reason: str | None = None
+    93	
+    94	
+    95	class TokenDecisionRequest(BaseModel):
+    96	    token: str
+    97	
+    98	
+    99	class TenantSettingsUpdate(BaseModel):
+   100	    """Mutable tenant settings. All fields optional — only those set are touched."""
+   101	    default_approvers: list[str] | None = None
+   102	
+   103	
+   104	class AuditEventCreate(BaseModel):
+   105	    action_id: str
+   106	    execution_result: str
+   107	    error: str | None = None
+   108	
+   109	
+   110	class ApproverContactCreate(BaseModel):
+   111	    channel: str = "sms"
+   112	    phone_number: str
+   113	    display_name: str | None = None
+   114	    consent_attested: bool = False
+   115	    consent_source: str = "dashboard"
+   116	    consent_note: str | None = None
+   117	
+   118	    @field_validator("channel")
+   119	    @classmethod
+   120	    def _sms_only(cls, v: str) -> str:
+   121	        if v != "sms":
+   122	            raise ValueError("only sms contacts are supported")
+   123	        return v
+   124	
+   125	
+   126	class ApproverContactResponse(BaseModel):
+   127	    model_config = ConfigDict(from_attributes=True)
+   128	
+   129	    id: str
+   130	    tenant_id: str
+   131	    channel: str
+   132	    phone_number: str
+   133	    destination_last4: str
+   134	    display_name: str | None = None
+   135	    consent_status: str
+   136	    consent_source: str
+   137	    consent_note: str | None = None
+   138	    consented_at: datetime | None = None
+   139	    revoked_at: datetime | None = None
+   140	    created_at: datetime
+   141	    updated_at: datetime
+     1	import csv
+     2	import io
+     3	import json
+     4	from datetime import UTC, datetime
+     5	
+     6	import structlog
+     7	from fastapi import APIRouter, Depends, HTTPException, Query
+     8	from fastapi.responses import StreamingResponse
+     9	from sqlalchemy import select
+    10	from sqlalchemy.ext.asyncio import AsyncSession
+    11	
+    12	from app.auth import get_current_tenant
+    13	from app.db import get_db
+    14	from app.models import Approval, AuditEvent, Tenant
+    15	from app.schemas import AuditEventCreate
+    16	
+    17	# _compute_hash is the canonical hash used when events are appended
+    18	# (see app/services/audit_log.py) — verification must replicate it exactly.
+    19	from app.services.audit_log import _compute_hash, append_audit_event
+    20	from app.services.pagination import paginate_stmt
+    21	from app.services.tsa import TSAError, timestamp_audit_event
+    22	
+    23	router = APIRouter()
+    24	logger = structlog.get_logger(__name__)
+    25	
+    26	
+    27	def _serialize(e: AuditEvent) -> dict:
+    28	    return {
+    29	        "id": e.id,
+    30	        "action_id": e.action_id,
+    31	        "execution_result": e.execution_result,
+    32	        "error": e.error,
+    33	        "prev_hash": e.prev_hash,
+    34	        "event_hash": e.event_hash,
+    35	        "tsa_timestamp": e.tsa_timestamp,
+    36	        "created_at": e.created_at,
+    37	    }
+    38	
+    39	
+    40	@router.post("")
+    41	async def emit(
+    42	    payload: AuditEventCreate,
+    43	    db: AsyncSession = Depends(get_db),
+    44	    tenant: Tenant = Depends(get_current_tenant),
+    45	):
+    46	    # Verify the action belongs to this tenant before recording an event for it
+    47	    approval = await db.get(Approval, payload.action_id)
+    48	    if not approval or approval.tenant_id != tenant.id:
+    49	        raise HTTPException(404, "Not found")
+    50	    event = await append_audit_event(
+    51	        db, tenant.id, payload.action_id, payload.execution_result, payload.error
+    52	    )
+    53	    # Best-effort RFC 3161 timestamping: a no-op unless TSA_URL is configured,
+    54	    # and a TSA outage must never fail the audit write itself.
+    55	    try:
+    56	        await timestamp_audit_event(db, event)
+    57	    except TSAError:
+    58	        logger.warning("tsa_timestamp_failed", event_id=event.id, exc_info=True)
+    59	    return _serialize(event)
+    60	
+    61	
+    62	@router.get("")
+    63	async def list_events(
+    64	    action_id: str | None = Query(None, description="Filter to a single action_id"),
+    65	    limit: int | None = Query(None, ge=1, le=500),
+    66	    cursor: str | None = Query(None),
+    67	    db: AsyncSession = Depends(get_db),
+    68	    tenant: Tenant = Depends(get_current_tenant),
+    69	):
+    70	    """List audit events.
+    71	
+    72	    Backward-compatible: no limit + no cursor → legacy top-100 bare array.
+    73	    Either present → cursor-paginated envelope {data, has_more, next_cursor}.
+    74	    """
+    75	    base = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+    76	    if action_id:
+    77	        base = base.where(AuditEvent.action_id == action_id)
+    78	
+    79	    if limit is None and cursor is None:
+    80	        stmt = base.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(100)
+    81	        result = await db.execute(stmt)
+    82	        return [_serialize(e) for e in result.scalars().all()]
+    83	
+    84	    page = await paginate_stmt(db, base, AuditEvent, limit=limit or 100, cursor=cursor)
+    85	    return {
+    86	        "data": [_serialize(e) for e in page.items],
+    87	        "has_more": page.has_more,
+    88	        "next_cursor": page.next_cursor,
+    89	    }
+    90	
+    91	
+    92	@router.get("/verify")
+    93	async def verify_chain(
+    94	    db: AsyncSession = Depends(get_db),
+    95	    tenant: Tenant = Depends(get_current_tenant),
+    96	):
+    97	    """Walk the tenant's full audit hash chain and prove tamper-evidence.
+    98	
+    99	    Recomputes each event's hash from its stored payload (same computation as
+   100	    app/services/audit_log.py) and checks the prev_hash linkage. Read-only.
+   101	    """
+   102	    stmt = (
+   103	        select(AuditEvent)
+   104	        .where(AuditEvent.tenant_id == tenant.id)
+   105	        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+   106	    )
+   107	    result = await db.execute(stmt)
+   108	    events = result.scalars().all()
+   109	
+   110	    valid = True
+   111	    first_invalid_event_id = None
+   112	    prev_event_hash = None
+   113	
+   114	    for e in events:
+   115	        # Same payload shape append_audit_event hashes at write time.
+   116	        payload = {
+   117	            "action_id": e.action_id,
+   118	            "execution_result": e.execution_result,
+   119	            "error": e.error,
+   120	        }
+   121	        expected_hash = _compute_hash(e.prev_hash, payload)
+   122	        if e.event_hash != expected_hash or e.prev_hash != prev_event_hash:
+   123	            valid = False
+   124	            first_invalid_event_id = e.id
+   125	            break
+   126	        prev_event_hash = e.event_hash
+   127	
+   128	    return {
+   129	        "valid": valid,
+   130	        "events_checked": len(events),
+   131	        "first_invalid_event_id": first_invalid_event_id,
+   132	        "checked_at": datetime.now(UTC).isoformat(),
+   133	    }
+   134	
+   135	
+   136	@router.get(".csv")
+   137	async def export_csv(
+   138	    action_id: str | None = Query(None, description="Filter to a single action_id"),
+   139	    limit: int = Query(10_000, ge=1, le=100_000),
+   140	    db: AsyncSession = Depends(get_db),
+   141	    tenant: Tenant = Depends(get_current_tenant),
+   142	):
+   143	    """Stream audit events as CSV for offline analysis / compliance reviews.
+   144	
+   145	    Customers ask for this constantly during procurement — they want to ingest
+   146	    the audit log into their own SIEM. Keep the column set stable; downstream
+   147	    parsers depend on the header row.
+   148	    """
+   149	    stmt = select(AuditEvent).where(AuditEvent.tenant_id == tenant.id)
+   150	    if action_id:
+   151	        stmt = stmt.where(AuditEvent.action_id == action_id)
+   152	    stmt = stmt.order_by(AuditEvent.created_at.asc()).limit(limit)
+   153	    result = await db.execute(stmt)
+   154	    rows = result.scalars().all()
+   155	
+   156	    def generate():
+   157	        buf = io.StringIO()
+   158	        writer = csv.writer(buf)
+   159	        writer.writerow(
+   160	            [
+   161	                "id",
+   162	                "action_id",
+   163	                "created_at_utc",
+   164	                "execution_result_json",
+   165	                "error",
+   166	                "prev_hash",
+   167	                "event_hash",
+   168	            ]
+   169	        )
+   170	        yield buf.getvalue()
+   171	        buf.seek(0)
+   172	        buf.truncate(0)
+   173	
+   174	        for e in rows:
+   175	            writer.writerow(
+   176	                [
+   177	                    e.id,
+   178	                    e.action_id,
+   179	                    e.created_at.isoformat() if e.created_at else "",
+   180	                    json.dumps(e.execution_result, default=str) if e.execution_result is not None else "",
+   181	                    e.error or "",
+   182	                    e.prev_hash or "",
+   183	                    e.event_hash or "",
+   184	                ]
+   185	            )
+   186	            yield buf.getvalue()
+   187	            buf.seek(0)
+   188	            buf.truncate(0)
+   189	
+   190	    return StreamingResponse(
+   191	        generate(),
+   192	        media_type="text/csv",
+   193	        headers={
+   194	            "Content-Disposition": f'attachment; filename="audit-{tenant.id}.csv"',
+   195	        },
+   196	    )
+.venv

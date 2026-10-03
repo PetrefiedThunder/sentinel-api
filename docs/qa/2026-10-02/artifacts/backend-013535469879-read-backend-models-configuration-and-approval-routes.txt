@@ -1,0 +1,377 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sentinel-api"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sqlalchemy>=2.0",
+    "greenlet>=3.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "redis>=5.0",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "twilio>=9.0",
+    "sentry-sdk[fastapi]>=2.0",
+    "structlog>=24.4",
+    "asn1crypto>=1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "aiosqlite>=0.20",
+    "ruff>=0.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["dist", "build", ".venv", "alembic/versions"]
+
+[tool.ruff.lint]
+# TCH omitted: FastAPI resolves endpoint annotations at runtime, so moving
+# imports like AsyncSession into TYPE_CHECKING blocks breaks Depends().
+select = ["E", "F", "W", "I", "B", "C4", "UP", "SIM"]
+ignore = [
+    "E501",  # formatter handles line length
+    "B008",  # FastAPI Depends() in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+"alembic/env.py" = ["E402"]  # alembic imports after sys.path manipulation
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["app"]
+
+[tool.coverage.report]
+# Gate raised to 70 in QA-COVERAGE-70 (measured ~80% at the time).
+fail_under = 70
+import asyncio
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import get_current_tenant
+from app.db import get_db
+from app.models import Approval, Tenant
+from app.schemas import ApprovalCreate, DecisionRequest, TokenDecisionRequest
+from app.services.approval_service import create_approval
+from app.services.approval_tokens import InvalidApprovalToken, verify_decision_token
+from app.services.audit_log import append_audit_event
+from app.services.contacts import find_active_sms_contact, sms_approver_phone
+from app.services.decision_bus import bus, notify_decision
+from app.services.idempotency import run_with_idempotency
+from app.services.nonce_store import is_nonce_consumed, mark_nonce_consumed, token_nonce
+from app.services.pagination import paginate_stmt
+from app.services.webhooks import dispatch_approval_webhook
+
+router = APIRouter()
+
+
+def _utcnow():
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+async def _rollback_or_reraise_integrity_error(db, error: IntegrityError) -> None:
+    """Clean up an integrity failure without hiding it behind cleanup errors."""
+    try:
+        await db.rollback()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        raise error from None
+
+
+def _serialize(a: Approval) -> dict:
+    return {
+        "action_id": a.id,
+        "id": a.id,
+        "tenant_id": a.tenant_id,
+        "function_name": a.function_name,
+        "arguments": a.arguments,
+        "risk_level": a.risk_level,
+        "approvers": a.approvers,
+        "timeout_seconds": a.timeout_seconds,
+        "decision": a.decision,
+        "status": a.decision,
+        "decided_by": a.decided_by,
+        "decided_at": a.decided_at,
+        "reason": a.reason,
+        "created_at": a.created_at,
+    }
+
+
+@router.post("")
+async def create(
+    payload: ApprovalCreate,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    """Create an approval. Pass `Idempotency-Key: <opaque>` to make retries
+    safe — the same key replays the original response without firing
+    duplicate emails or creating duplicate rows."""
+
+    async def _do_create() -> dict:
+        for approver in payload.approvers:
+            phone = sms_approver_phone(approver)
+            if phone and not await find_active_sms_contact(db, tenant.id, phone):
+                raise HTTPException(
+                    400, "SMS approver requires active SMS consent contact"
+                )
+        approval = await create_approval(
+            db, tenant, payload, background_tasks=background_tasks
+        )
+        return {
+            "action_id": approval.id,
+            "status": approval.decision,
+            **_serialize(approval),
+        }
+
+    return await run_with_idempotency(
+        db,
+        tenant_id=tenant.id,
+        idempotency_key=idempotency_key,
+        method="POST",
+        path="/v1/approvals",
+        request_body=payload.model_dump(),
+        handler=_do_create,
+    )
+
+
+@router.get("")
+async def list_approvals(
+    status: str | None = None,
+    limit: int | None = Query(None, ge=1, le=100),
+    cursor: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """List approvals.
+
+    Backward-compatible: with no `limit` and no `cursor`, returns the legacy
+    top-200 bare array. With either present, returns the cursor-paginated
+    envelope {data, has_more, next_cursor}.
+    """
+    base = select(Approval).where(Approval.tenant_id == tenant.id)
+    if status:
+        base = base.where(Approval.decision == status)
+
+    if limit is None and cursor is None:
+        # Legacy shape — don't break existing SDK clients
+        stmt = base.order_by(Approval.created_at.desc(), Approval.id.desc()).limit(200)
+        result = await db.execute(stmt)
+        return [_serialize(a) for a in result.scalars().all()]
+
+    page = await paginate_stmt(db, base, Approval, limit=limit or 50, cursor=cursor)
+    return {
+        "data": [_serialize(a) for a in page.items],
+        "has_more": page.has_more,
+        "next_cursor": page.next_cursor,
+    }
+
+
+@router.get("/{action_id}/wait")
+async def wait_for_decision(
+    action_id: str,
+    timeout: float = Query(30, ge=1, le=300, description="Seconds to wait for a decision"),
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    """Long-poll for a decision. Uses Postgres LISTEN/NOTIFY for sub-100ms
+    detection, with a 100ms DB fallback poll to handle missed notifications.
+    """
+    approval = await db.get(Approval, action_id)
+    if not approval or approval.tenant_id != tenant.id:
+        raise HTTPException(404, "Not found")
+    if approval.decision != "pending":
+        return _serialize(approval)
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    poll_interval = 0.1
+    # Race: NOTIFY-wait against a poll loop. Whichever wakes first wins.
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            return _serialize(approval)
+        wait_window = min(remaining, 5.0)  # cap each NOTIFY-wait at 5s
+        notify_task = asyncio.create_task(bus.wait_for(action_id, wait_window))
+        poll_task = asyncio.create_task(asyncio.sleep(poll_interval))
+        done, pending = await asyncio.wait(
+            {notify_task, poll_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in pending:
+            t.cancel()
+        await db.refresh(approval)
+        if approval.decision != "pending":
+            return _serialize(approval)
+
+
+@router.get("/{action_id}")
+async def get_approval(
+    action_id: str,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    approval = await db.get(Approval, action_id)
+    if not approval or approval.tenant_id != tenant.id:
+        raise HTTPException(404, "Not found")
+    return _serialize(approval)
+
+
+@router.post("/{action_id}/decision")
+async def decide(
+    action_id: str,
+    payload: DecisionRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
+    tenant_id = tenant.id
+    try:
+        approval = await db.scalar(
+            select(Approval)
+            .where(Approval.id == action_id, Approval.tenant_id == tenant_id)
+            # key_share=True without read=True renders FOR NO KEY UPDATE on
+            # PostgreSQL: serialize decisions without blocking audit FK checks.
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        if not approval:
+            raise HTTPException(404, "Not found")
+        if approval.decision != "pending":
+            raise HTTPException(400, f"Already {approval.decision}")
+        if payload.decision not in ("approved", "rejected"):
+            raise HTTPException(400, "decision must be 'approved' or 'rejected'")
+        approval.decision = payload.decision
+        approval.decided_by = payload.decided_by
+        approval.decided_at = _utcnow()
+        approval.reason = payload.reason
+        await append_audit_event(
+            db, tenant_id, action_id, f"decision:{payload.decision}", commit=False
+        )
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise
+    await db.refresh(approval)
+    await notify_decision(db, approval.id)
+    await dispatch_approval_webhook(db, approval)
+    return _serialize(approval)
+
+
+@router.post("/{action_id}/token-decision")
+async def decide_with_token(
+    action_id: str,
+    payload: TokenDecisionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        decision = verify_decision_token(payload.token, action_id)
+    except (InvalidApprovalToken, ValueError):
+        raise HTTPException(401, "Invalid or expired approval token") from None
+
+    # Replay protection: each token is single-use, tracked server-side
+    # (persisted, so it survives restarts and any approval-state changes).
+    nonce = token_nonce(payload.token)
+    try:
+        if await is_nonce_consumed(db, nonce):
+            raise HTTPException(409, "Approval token already used")
+        approval = await db.scalar(
+            select(Approval)
+            .where(Approval.id == action_id)
+            # FOR NO KEY UPDATE keeps audit FK reads compatible with this lock.
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        if not approval:
+            raise HTTPException(404, "Not found")
+        # The same token may have committed while this request waited for the
+        # approval lock. Preserve 409 for replay, 400 for a different token.
+        if await is_nonce_consumed(db, nonce):
+            raise HTTPException(409, "Approval token already used")
+        if approval.decision != "pending":
+            raise HTTPException(400, f"Already {approval.decision}")
+
+import hashlib
+import secrets
+
+from fastapi import Depends, Header, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import get_db
+from app.models import ApiKey, Tenant
+
+
+def hash_key(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def generate_api_key(mode: str = "live") -> tuple[str, str, str]:
+    """Issue an API key. mode='live' → sk_live_…, mode='test' → sk_test_…
+
+    Test-mode keys are scoped to a test workspace whose approvals never fire
+    real emails/SMS — see services that gate on tenant.mode.
+    """
+    token_prefix = "sk_test_" if mode == "test" else "sk_live_"
+    raw = f"{token_prefix}{secrets.token_hex(32)}"
+    prefix = raw[:11]
+    return raw, prefix, hash_key(raw)
+
+
+async def get_current_tenant(
+    authorization: [REDACTED] = Header(...),
+    db: AsyncSession = Depends(get_db),
+) -> Tenant:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    raw_key = authorization.split(" ", 1)[1].strip()
+    key_hash = hash_key(raw_key)
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))
+    )
+    api_key = result.scalar_one_or_none()
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    tenant = await db.get(Tenant, api_key.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=401, detail="Tenant not found")
+    # Stamp tenant_id on every subsequent log line in this request
+    from app.logging_setup import bind_request_context
+    bind_request_context(tenant_id=tenant.id, api_key_id=api_key.id)
+    return tenant
+from app.main import app
+
+
+def test_slack_routes_are_not_registered():
+    route_paths = {getattr(route, "path", "") for route in app.routes}
+
+    assert "/webhooks/slack/interactivity" not in route_paths
+    assert "/_debug/slack" not in route_paths
