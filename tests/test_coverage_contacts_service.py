@@ -172,6 +172,113 @@ def test_set_status_by_phone_revokes_all_matching():
         run(engine.dispose())
 
 
+def test_unchecked_save_preserves_revoked_contact():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        created = run(
+            contacts.create_or_reactivate_sms_contact(
+                session,
+                tenant.id,
+                "+15551234567",
+                "Chris",
+                "dashboard",
+                "orig note",
+                consent_attested=True,
+            )
+        )
+        revoked = run(contacts.revoke_contact(session, tenant.id, created.id))
+        assert revoked.consent_status == "revoked"
+        consented_at = created.consented_at
+        revoked_at = revoked.revoked_at
+        assert consented_at is not None
+        assert revoked_at is not None
+
+        saved = run(
+            contacts.create_or_reactivate_sms_contact(
+                session,
+                tenant.id,
+                "+15551234567",
+                "Chris Renamed",
+                "other-source",
+                "other note",
+                consent_attested=False,
+            )
+        )
+        assert saved.id == created.id
+        # Revocation state and provenance survive the unchecked save.
+        assert saved.consent_status == "revoked"
+        assert saved.consent_source == "dashboard"
+        assert saved.consent_note == "orig note"
+        assert saved.consented_at == consented_at
+        assert saved.revoked_at == revoked_at
+        # Unrelated fields are still updated.
+        assert saved.display_name == "Chris Renamed"
+        # SMS delivery stays gated on active consent.
+        assert run(contacts.find_active_sms_contact(session, tenant.id, "+15551234567")) is None
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_unchecked_save_on_not_consented_contact_keeps_no_consent():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        first = run(
+            contacts.create_or_reactivate_sms_contact(
+                session, tenant.id, "+15551234567", "Chris", "dashboard", consent_attested=False
+            )
+        )
+        assert first.consent_status == "not_consented"
+
+        second = run(
+            contacts.create_or_reactivate_sms_contact(
+                session, tenant.id, "+15551234567", "Chris", "dashboard", consent_attested=False
+            )
+        )
+        assert second.id == first.id
+        assert second.consent_status == "not_consented"
+        assert second.consented_at is None
+        assert second.revoked_at is None
+        assert run(contacts.find_active_sms_contact(session, tenant.id, "+15551234567")) is None
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_explicit_reconsent_after_revoke_records_new_provenance():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        created = run(
+            contacts.create_or_reactivate_sms_contact(
+                session, tenant.id, "+15551234567", "Chris", "dashboard", consent_attested=True
+            )
+        )
+        revoked = run(contacts.revoke_contact(session, tenant.id, created.id))
+        assert revoked.revoked_at is not None
+
+        reconsented = run(
+            contacts.create_or_reactivate_sms_contact(
+                session,
+                tenant.id,
+                "+15551234567",
+                "Chris",
+                "api",
+                "re-consented",
+                consent_attested=True,
+            )
+        )
+        assert reconsented.id == created.id
+        assert reconsented.consent_status == "active"
+        assert reconsented.revoked_at is None
+        assert reconsented.consent_source == "api"
+        assert reconsented.consent_note == "re-consented"
+        assert reconsented.consented_at is not None
+        assert run(contacts.find_active_sms_contact(session, tenant.id, "+15551234567")) is not None
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
 def test_serialize_contact_shape():
     engine, session, tenant = run(make_sqlite_session())
     try:
