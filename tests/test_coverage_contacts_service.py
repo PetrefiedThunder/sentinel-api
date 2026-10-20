@@ -3,6 +3,7 @@ import pytest
 from test_support import make_sqlite_session, run
 
 import app.services.contacts as contacts
+from app.models import ApproverContact
 
 
 def test_normalize_phone_number_strips_formatting():
@@ -43,6 +44,7 @@ def test_create_then_find_active_sms_contact():
                 display_name="Chris",
                 consent_source="dashboard",
                 consent_note="ok",
+                consent_attested=True,
             )
         )
         assert created.consent_status == "active"
@@ -56,19 +58,40 @@ def test_create_then_find_active_sms_contact():
         run(engine.dispose())
 
 
+def test_contact_without_explicit_status_defaults_to_not_consented():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        phone = "+15551234567"
+        contact = ApproverContact(
+            tenant_id=tenant.id,
+            channel="sms",
+            destination=phone,
+            destination_hash=contacts.destination_hash(phone),
+            destination_last4=phone[-4:],
+            consent_source="dashboard",
+        )
+        session.add(contact)
+        run(session.commit())
+        assert contact.consent_status == contacts.NOT_CONSENTED
+        assert run(contacts.find_active_sms_contact(session, tenant.id, phone)) is None
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
 def test_reactivate_updates_existing_row():
     engine, session, tenant = run(make_sqlite_session())
     try:
         first = run(
             contacts.create_or_reactivate_sms_contact(
-                session, tenant.id, "+15551234567", "Chris", "dashboard"
+                session, tenant.id, "+15551234567", "Chris", "dashboard", consent_attested=True
             )
         )
         # revoke then re-create → same row reactivated
         run(contacts.revoke_contact(session, tenant.id, first.id))
         second = run(
             contacts.create_or_reactivate_sms_contact(
-                session, tenant.id, "+15551234567", "Christopher", "api"
+                session, tenant.id, "+15551234567", "Christopher", "api", consent_attested=True
             )
         )
         assert second.id == first.id
@@ -85,7 +108,7 @@ def test_list_contacts_returns_tenant_rows():
     try:
         run(
             contacts.create_or_reactivate_sms_contact(
-                session, tenant.id, "+15551234567", "A", "dashboard"
+                session, tenant.id, "+15551234567", "A", "dashboard", consent_attested=True
             )
         )
         rows = run(contacts.list_contacts(session, tenant.id))
@@ -109,7 +132,7 @@ def test_find_active_returns_none_when_revoked():
     try:
         created = run(
             contacts.create_or_reactivate_sms_contact(
-                session, tenant.id, "+15551234567", "A", "dashboard"
+                session, tenant.id, "+15551234567", "A", "dashboard", consent_attested=True
             )
         )
         run(contacts.revoke_contact(session, tenant.id, created.id))
@@ -124,7 +147,7 @@ def test_set_status_by_phone_revokes_all_matching():
     try:
         run(
             contacts.create_or_reactivate_sms_contact(
-                session, tenant.id, "+15551234567", "A", "dashboard"
+                session, tenant.id, "+15551234567", "A", "dashboard", consent_attested=True
             )
         )
         updated = run(
@@ -154,7 +177,7 @@ def test_serialize_contact_shape():
     try:
         created = run(
             contacts.create_or_reactivate_sms_contact(
-                session, tenant.id, "+15551234567", "A", "dashboard"
+                session, tenant.id, "+15551234567", "A", "dashboard", consent_attested=True
             )
         )
         out = contacts.serialize_contact(created)

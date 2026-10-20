@@ -4,7 +4,7 @@ from test_support import client_for, make_sqlite_session, run
 from app.models import ApproverContact
 
 
-def test_contact_api_requires_explicit_sms_consent_attestation():
+def test_contact_api_saves_without_sms_consent_attestation():
     engine, session, tenant = run(make_sqlite_session())
     try:
         with client_for(session, tenant) as client:
@@ -19,8 +19,15 @@ def test_contact_api_requires_explicit_sms_consent_attestation():
                 },
             )
 
-        assert response.status_code == 400
-        assert "consent" in response.json()["detail"].lower()
+            assert response.status_code == 200
+            contact = response.json()
+            assert contact["consent_status"] == "not_consented"
+            assert contact["consented_at"] is None
+            assert contact["revoked_at"] is None
+
+            listed = client.get("/v1/approver-contacts")
+            assert listed.status_code == 200
+            assert listed.json()[0]["id"] == contact["id"]
     finally:
         run(session.close())
         run(engine.dispose())
@@ -47,6 +54,7 @@ def test_contact_api_normalizes_lists_revokes_and_reactivates_sms_contact():
             assert contact["phone_number"] == "+15551234567"
             assert contact["destination_last4"] == "4567"
             assert contact["consent_status"] == "active"
+            assert contact["consented_at"] is not None
             assert contact["revoked_at"] is None
 
             listed = client.get("/v1/approver-contacts")
@@ -75,6 +83,34 @@ def test_contact_api_normalizes_lists_revokes_and_reactivates_sms_contact():
 
         rows = run(session.execute(select(ApproverContact)))
         assert len(rows.scalars().all()) == 1
+    finally:
+        run(session.close())
+        run(engine.dispose())
+
+
+def test_unchecked_attestation_deactivates_existing_sms_contact():
+    engine, session, tenant = run(make_sqlite_session())
+    try:
+        with client_for(session, tenant) as client:
+            payload = {
+                "channel": "sms",
+                "phone_number": "+15551234567",
+                "display_name": "Chris",
+                "consent_source": "dashboard",
+            }
+            active = client.post(
+                "/v1/approver-contacts", json={**payload, "consent_attested": True}
+            )
+            assert active.status_code == 200
+
+            not_consented = client.post(
+                "/v1/approver-contacts", json={**payload, "consent_attested": False}
+            )
+            assert not_consented.status_code == 200
+            assert not_consented.json()["id"] == active.json()["id"]
+            assert not_consented.json()["consent_status"] == "not_consented"
+            assert not_consented.json()["consented_at"] is None
+            assert not_consented.json()["revoked_at"] is not None
     finally:
         run(session.close())
         run(engine.dispose())
