@@ -188,6 +188,10 @@ def test_unchecked_save_preserves_revoked_contact():
         )
         revoked = run(contacts.revoke_contact(session, tenant.id, created.id))
         assert revoked.consent_status == "revoked"
+        consented_at = created.consented_at
+        revoked_at = revoked.revoked_at
+        assert consented_at is not None
+        assert revoked_at is not None
 
         saved = run(
             contacts.create_or_reactivate_sms_contact(
@@ -205,8 +209,8 @@ def test_unchecked_save_preserves_revoked_contact():
         assert saved.consent_status == "revoked"
         assert saved.consent_source == "dashboard"
         assert saved.consent_note == "orig note"
-        assert saved.consented_at == created.consented_at
-        assert saved.revoked_at == revoked.revoked_at
+        assert saved.consented_at == consented_at
+        assert saved.revoked_at == revoked_at
         # Unrelated fields are still updated.
         assert saved.display_name == "Chris Renamed"
         # SMS delivery stays gated on active consent.
