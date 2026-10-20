@@ -100,16 +100,22 @@ async def create_or_reactivate_sms_contact(
         contact.destination = phone
         contact.destination_last4 = phone[-4:]
         contact.display_name = display_name
-        was_active = contact.consent_status == ACTIVE
-        contact.consent_status = ACTIVE if consent_attested else NOT_CONSENTED
-        contact.consent_source = consent_source
-        contact.consent_note = consent_note
-        contact.consented_at = now if consent_attested else None
-        if consent_attested:
-            contact.revoked_at = None
-        elif was_active:
-            contact.revoked_at = now
-        contact.updated_at = now
+        if not consent_attested and contact.consent_status == REVOKED:
+            # An unchecked save edits unrelated fields only: keep the revoked
+            # status and all consent/revocation provenance (source, note,
+            # consented_at, revoked_at) intact.
+            contact.updated_at = now
+        else:
+            was_active = contact.consent_status == ACTIVE
+            contact.consent_status = ACTIVE if consent_attested else NOT_CONSENTED
+            contact.consent_source = consent_source
+            contact.consent_note = consent_note
+            contact.consented_at = now if consent_attested else None
+            if consent_attested:
+                contact.revoked_at = None
+            elif was_active:
+                contact.revoked_at = now
+            contact.updated_at = now
     await db.commit()
     await db.refresh(contact)
     return contact
