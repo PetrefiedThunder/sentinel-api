@@ -21,8 +21,6 @@ async def create_contact(
     db: AsyncSession = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
 ):
-    if not payload.consent_attested:
-        raise HTTPException(400, "SMS consent must be explicitly attested")
     contact = await create_or_reactivate_sms_contact(
         db,
         tenant.id,
@@ -30,6 +28,7 @@ async def create_contact(
         payload.display_name,
         payload.consent_source,
         payload.consent_note,
+        consent_attested=payload.consent_attested,
     )
     return serialize_contact(contact)
 

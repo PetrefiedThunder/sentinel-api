@@ -10,6 +10,7 @@ from app.config import settings
 from app.models import ApproverContact
 
 ACTIVE = "active"
+NOT_CONSENTED = "not_consented"
 REVOKED = "revoked"
 
 
@@ -72,6 +73,8 @@ async def create_or_reactivate_sms_contact(
     display_name: str | None,
     consent_source: str,
     consent_note: str | None = None,
+    *,
+    consent_attested: bool,
 ) -> ApproverContact:
     phone = normalize_phone_number(phone_number)
     now = utcnow()
@@ -84,10 +87,10 @@ async def create_or_reactivate_sms_contact(
             destination_hash=destination_hash(phone),
             destination_last4=phone[-4:],
             display_name=display_name,
-            consent_status=ACTIVE,
+            consent_status=ACTIVE if consent_attested else NOT_CONSENTED,
             consent_source=consent_source,
             consent_note=consent_note,
-            consented_at=now,
+            consented_at=now if consent_attested else None,
             revoked_at=None,
             created_at=now,
             updated_at=now,
@@ -97,11 +100,15 @@ async def create_or_reactivate_sms_contact(
         contact.destination = phone
         contact.destination_last4 = phone[-4:]
         contact.display_name = display_name
-        contact.consent_status = ACTIVE
+        was_active = contact.consent_status == ACTIVE
+        contact.consent_status = ACTIVE if consent_attested else NOT_CONSENTED
         contact.consent_source = consent_source
         contact.consent_note = consent_note
-        contact.consented_at = now
-        contact.revoked_at = None
+        contact.consented_at = now if consent_attested else None
+        if consent_attested:
+            contact.revoked_at = None
+        elif was_active:
+            contact.revoked_at = now
         contact.updated_at = now
     await db.commit()
     await db.refresh(contact)

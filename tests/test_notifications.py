@@ -60,6 +60,32 @@ def reset_settings(monkeypatch):
     monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://app.pauseapi.app")
 
 
+async def _active_sms_approval():
+    engine, session, tenant = await make_sqlite_session()
+    phone = normalize_phone_number("+15551234567")
+    approval = Approval(
+        id="act_123",
+        tenant_id=TENANT_ID,
+        function_name="transfer_funds",
+        arguments={"amount": 1000},
+        risk_level="high",
+        approvers=["sms:+15551234567"],
+        timeout_seconds=300,
+    )
+    contact = ApproverContact(
+        tenant_id=TENANT_ID,
+        channel="sms",
+        destination=phone,
+        destination_hash=destination_hash(phone),
+        destination_last4=phone[-4:],
+        consent_status="active",
+        consent_source="dashboard",
+    )
+    session.add_all([approval, contact])
+    await session.commit()
+    return engine, session, tenant, approval, contact
+
+
 @pytest.mark.asyncio
 async def test_send_sms_posts_twilio_message_for_sms_approvers(monkeypatch):
     monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
@@ -71,36 +97,33 @@ async def test_send_sms_posts_twilio_message_for_sms_approvers(monkeypatch):
         lambda action_id, decision, expires_in_seconds: f"{decision}_token",
         raising=False,
     )
-    approval = SimpleNamespace(
-        id="act_123",
-        function_name="transfer_funds",
-        risk_level="high",
-        approvers=["sms:+15551234567"],
-        timeout_seconds=300,
-    )
+    engine, session, tenant, approval, _ = await _active_sms_approval()
+    try:
+        await notifications.dispatch_approval_notifications(approval, tenant, db=session)
 
-    await notifications.dispatch_approval_notifications(approval, tenant=None)
-
-    assert FakeAsyncClient.requests == [
-        (
-            "https://api.twilio.com/2010-04-01/Accounts/AC123/Messages.json",
-            {
-                "auth": ("AC123", "secret"),
-                "data": {
-                    "From": "+15550000000",
-                    "To": "+15551234567",
-                    "StatusCallback": "https://api.pauseapi.app/webhooks/twilio/status",
-                    "Body": (
-                        "Sentinel approval needed: transfer_funds\n"
-                        "Risk: high\n"
-                        "Approve: https://app.pauseapi.app/approve/act_123?d=approved&t=approved_token\n"
-                        "Reject: https://app.pauseapi.app/approve/act_123?d=rejected&t=rejected_token\n"
-                        "Reply STOP to opt out, HELP for help."
-                    ),
+        assert FakeAsyncClient.requests == [
+            (
+                "https://api.twilio.com/2010-04-01/Accounts/AC123/Messages.json",
+                {
+                    "auth": ("AC123", "secret"),
+                    "data": {
+                        "From": "+15550000000",
+                        "To": "+15551234567",
+                        "StatusCallback": "https://api.pauseapi.app/webhooks/twilio/status",
+                        "Body": (
+                            "Sentinel approval needed: transfer_funds\n"
+                            "Risk: high\n"
+                            "Approve: https://app.pauseapi.app/approve/act_123?d=approved&t=approved_token\n"
+                            "Reject: https://app.pauseapi.app/approve/act_123?d=rejected&t=rejected_token\n"
+                            "Reply STOP to opt out, HELP for help."
+                        ),
+                    },
                 },
-            },
-        )
-    ]
+            )
+        ]
+    finally:
+        await session.close()
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -115,18 +138,48 @@ async def test_send_sms_uses_messaging_service_when_configured(monkeypatch):
         lambda action_id, decision, expires_in_seconds: f"{decision}_token",
         raising=False,
     )
-    approval = SimpleNamespace(
-        id="act_123",
-        function_name="transfer_funds",
-        risk_level="high",
-        approvers=["sms:+15551234567"],
-        timeout_seconds=300,
-    )
+    engine, session, tenant, approval, _ = await _active_sms_approval()
+    try:
+        await notifications.dispatch_approval_notifications(approval, tenant, db=session)
+
+        assert FakeAsyncClient.requests[0][1]["data"]["MessagingServiceSid"] == "MG123"
+        assert "From" not in FakeAsyncClient.requests[0][1]["data"]
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("consent_status", ["not_consented", "revoked"])
+async def test_send_sms_skips_contact_without_active_consent(monkeypatch, consent_status):
+    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
+    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+    monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "+15550000000")
+    engine, session, tenant, approval, contact = await _active_sms_approval()
+    try:
+        contact.consent_status = consent_status
+        await session.commit()
+
+        await notifications.dispatch_approval_notifications(approval, tenant, db=session)
+
+        assert FakeAsyncClient.requests == []
+        attempts = await session.execute(select(NotificationAttempt))
+        assert attempts.scalars().all() == []
+    finally:
+        await session.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_send_sms_skips_when_consent_lookup_context_is_missing(monkeypatch):
+    monkeypatch.setattr(settings, "TWILIO_ACCOUNT_SID", "AC123")
+    monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", "secret")
+    monkeypatch.setattr(settings, "TWILIO_FROM_NUMBER", "+15550000000")
+    approval = SimpleNamespace(approvers=["sms:+15551234567"])
 
     await notifications.dispatch_approval_notifications(approval, tenant=None)
 
-    assert FakeAsyncClient.requests[0][1]["data"]["MessagingServiceSid"] == "MG123"
-    assert "From" not in FakeAsyncClient.requests[0][1]["data"]
+    assert FakeAsyncClient.requests == []
 
 
 @pytest.mark.asyncio
