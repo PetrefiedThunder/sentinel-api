@@ -1,5 +1,0 @@
-/Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api
-/Users/sellers/Projects/qa-sweep-2026-10-02/sentinel-api cfe4270 [qa/2026-10-02-sweep]
-https://github.com/PetrefiedThunder/sentinel-api.git
-qa/2026-10-02-sweep
-?? docs/qa/

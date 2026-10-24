@@ -13,7 +13,7 @@ Risk-first order: (1) authentication/recovery and consent authority, (2) cross-t
 
 The test pyramid is predominantly in-process route integration tests with a real auth dependency and in-memory database, supplemented by focused pure signing checks and isolated source-function experiments. No full browser is needed for backend invariants. Boundary/equivalence classes cover foreign, revoked, invalid, absent credentials; valid/invalid/Unicode tokens; private address families; configured/unconfigured callback authentication; explicit/default SMS recipients. Existing unit and contract tests supply timeout/risk bounds and idempotency failure cases. A new property-testing dependency was not warranted after the small malformed-token corpus found a concrete parser failure.
 
-All shell commands use the QA recorder. **The complete per-command UTC start/end time, exact command, exit status, duration and artifact pointer are in [backend-commands.jsonl](backend-commands.jsonl)**, merged into the main [SESSION-LOG.md](SESSION-LOG.md) by the lead. The table below records the charters, test sessions, edits, and dead ends; raw command artifacts retain failures rather than suppressing them.
+All shell commands use the QA recorder. The per-command UTC ledger and consolidated session log were removed after the sweep because the generated dumps contained sample data. The table below records the charters, test sessions, edits, and dead ends.
 
 ## Timed exploratory charters
 
@@ -28,20 +28,20 @@ These were bounded local exploratory sessions, not performance/load tests. Secur
 
 | Time | Event | Outcome / evidence |
 | --- | --- | --- |
-| 01:35:23 | Checkout identity and backend file inventory | Verified exact branch/remote/worktree; [artifact](artifacts/backend-013523931810-verify-repository-and-inspect-backend-configuration.txt). |
+| 01:35:23 | Checkout identity and backend file inventory | Verified exact branch/remote/worktree; artifact (removed: generated dump contained sample data). |
 | 01:35:35–01:36:07 | Source and existing-test review | Identified safe in-process test fixtures; rejected timeout false positive; noted settings' automatic dotenv loading and asked lead for safe harness. No environment files were read. Exact reads in command ledger. |
 | Approximately 01:35–01:36 | Security worker attempted unsupported wrapper group `backend-security` | Argument validation rejected the command before the inner shell ran. Worker switched to `backend`. This failed wrapper invocation could not append its own normal ledger entry. |
-| 01:36:26 | Webhook/consent inspection plus directory instruction search | Source inspection succeeded; final `rg --files` found no directory-level AGENTS files and returned 1. This was a search miss, not a test failure; [artifact](artifacts/backend-013626281103-inspect-webhook-validation-and-existing-boundary-tests.txt). |
+| 01:36:26 | Webhook/consent inspection plus directory instruction search | Source inspection succeeded; final `rg --files` found no directory-level AGENTS files and returned 1. This was a search miss, not a test failure; artifact (removed: generated dump contained sample data). |
 | 01:36–01:38 | Read-only security worker source experiments | Confirmed destination acceptance, weak signing guard, absent Twilio guard, mocked response readback and raw CSV formula cell. One attempted read of absent `tests/conftest.py` failed; existing `tests/test_support.py` supplies fixtures. Worker commands and failed-read output are preserved in the shared backend ledger/artifacts. |
-| 01:37:29 | Twilio source/tests and safe filename probes | Read callback code and existing signature coverage. Chained existence probes returned 1; no environment-file contents were opened; [artifact](artifacts/backend-013729579558-inspect-twilio-fail-open-and-existing-negative-path-coverage.txt). |
+| 01:37:29 | Twilio source/tests and safe filename probes | Read callback code and existing signature coverage. Chained existence probes returned 1; no environment-file contents were opened; artifact (removed: generated dump contained sample data). |
 | Before 01:37:49 | Added initial focused QA tests using apply_patch | Runtime-generated synthetic keys, in-memory SQLite, real auth, no application lifespan; all external side effects replaced with no-op test doubles. Known bugs marked strict xfail. |
-| 01:37:49–01:37:51 | Initial route suite | **31 passed, 11 xfailed**, exit 0; [artifact](artifacts/backend-013749991299-run-backend-auth-boundary-and-known-defect-regression-suite.txt). |
-| 01:38:11–01:38:13 | Negative control with `--runxfail` | **11 failed, 31 passed**, expected exit 1. Confirmed precise 200-vs-rejection, 500-vs-client-error, and missing-signing-guard behaviors; runtime synthetic key redacted; [artifact](artifacts/backend-013811784440-confirm-known-backend-defects-without-expected-failure-masking.txt). |
+| 01:37:49–01:37:51 | Initial route suite | **31 passed, 11 xfailed**, exit 0; artifact (removed: generated dump contained sample data). |
+| 01:38:11–01:38:13 | Negative control with `--runxfail` | **11 failed, 31 passed**, expected exit 1. Confirmed precise 200-vs-rejection, 500-vs-client-error, and missing-signing-guard behaviors; runtime synthetic key redacted; artifact (removed: generated dump contained sample data). |
 | Before 01:38:39 | Added harmless arithmetic CSV regression; strengthened state comparisons | BE-008 added. Recovery and Twilio assertions inspect persisted state, not status alone. No spreadsheet formula executed. |
-| 01:38:39 | Ruff on added test file | **All checks passed**; [artifact](artifacts/backend-013839758102-lint-the-added-backend-qa-tests.txt). |
-| 01:38:55–01:38:57 | Final focused route suite and source-line evidence | **31 passed, 12 xfailed**, exit 0; [artifact](artifacts/backend-013855727535-verify-final-focused-backend-suite-and-expected-failures.txt); [source references](artifacts/backend-013855727548-capture-exact-backend-finding-source-references.txt). |
+| 01:38:39 | Ruff on added test file | **All checks passed**; artifact (removed: generated dump contained sample data). |
+| 01:38:55–01:38:57 | Final focused route suite and source-line evidence | **31 passed, 12 xfailed**, exit 0; artifact (removed: generated dump contained sample data); source references (removed: generated dump contained sample data). |
 | Before 01:39:36 | Addressed independent gate feedback | Narrowed route xfails to `AssertionError`; setup failures use `pytest.fail` so they cannot masquerade as expected assertion failures. Weak-signing test specifically expects pytest's missing-exception failure. Prefix check retains only boolean before asserting, avoiding key disclosure. |
-| 01:39:36–01:39:38 | Rechecked narrowed xfails and Ruff | **31 passed, 12 xfailed; Ruff passed**; [artifact](artifacts/backend-013936645999-read-backend-utc-ledger-and-inspect-narrowed-xfails.txt). |
+| 01:39:36–01:39:38 | Rechecked narrowed xfails and Ruff | **31 passed, 12 xfailed; Ruff passed**; artifact (removed: generated dump contained sample data). |
 
 The lead owns whole-suite before/after coverage, static scanning, type-checking and dependency audit; see [COVERAGE.md](COVERAGE.md) and main command log for those independent results. Focused checks used `--no-cov` to avoid overwriting shared coverage output.
 

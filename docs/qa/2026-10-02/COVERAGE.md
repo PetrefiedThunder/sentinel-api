@@ -74,7 +74,7 @@ The full suite also ran on **CPython 3.11.15**, matching the CI major/minor: **2
 
 ## Raw evidence
 
-- [Before coverage JSON](artifacts/coverage-before.json) and [before JUnit](artifacts/junit-before.xml).
-- [After coverage JSON](artifacts/coverage-after.json) and [after JUnit](artifacts/junit-after.xml).
-- [CI-version JUnit](artifacts/junit-python311.xml).
-- Full commands and outcomes: [SESSION-LOG.md](SESSION-LOG.md), [BACKEND-LOG.md](BACKEND-LOG.md), [FRONTEND-LOG.md](FRONTEND-LOG.md), [UX-LOG.md](UX-LOG.md).
+- Before coverage JSON (removed: generated dump contained sample data) and before JUnit (removed: generated dump contained sample data).
+- After coverage JSON (removed: generated dump contained sample data) and after JUnit (removed: generated dump contained sample data).
+- CI-version JUnit (removed: generated dump contained sample data).
+- Full commands and outcomes: SESSION-LOG.md (removed: generated dump contained sample data), [BACKEND-LOG.md](BACKEND-LOG.md), [FRONTEND-LOG.md](FRONTEND-LOG.md), [UX-LOG.md](UX-LOG.md).
