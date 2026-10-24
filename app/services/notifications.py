@@ -77,6 +77,8 @@ async def _send_email(approval, tenant):
 
 
 async def _send_sms(approval, tenant, db=None):
+    if tenant is None or db is None:
+        return
     account_sid = settings.TWILIO_ACCOUNT_SID
     auth_token = settings.TWILIO_AUTH_TOKEN
     from_number = settings.TWILIO_FROM_NUMBER
@@ -106,21 +108,17 @@ async def _send_sms(approval, tenant, db=None):
         async with httpx.AsyncClient(timeout=10.0) as client:
             for recipient in recipients:
                 normalized_recipient = normalize_phone_number(recipient)
-                contact = None
-                if db is not None and tenant is not None:
-                    contact = await find_active_sms_contact(db, tenant.id, normalized_recipient)
-                    if contact is None:
-                        logger.warning("sms notify skipped: no active consent contact for %s", normalized_recipient[-4:])
-                        continue
-                attempt = None
-                if db is not None and tenant is not None:
-                    attempt = await create_sms_attempt(
-                        db,
-                        tenant.id,
-                        approval.id,
-                        contact.id if contact else None,
-                        normalized_recipient,
-                    )
+                contact = await find_active_sms_contact(db, tenant.id, normalized_recipient)
+                if contact is None:
+                    logger.warning("sms notify skipped: no active consent contact for %s", normalized_recipient[-4:])
+                    continue
+                attempt = await create_sms_attempt(
+                    db,
+                    tenant.id,
+                    approval.id,
+                    contact.id,
+                    normalized_recipient,
+                )
                 message_data = {
                     "To": normalized_recipient,
                     "Body": body,
@@ -141,24 +139,22 @@ async def _send_sms(approval, tenant, db=None):
                     )
                     response.raise_for_status()
                     provider_payload = response.json()
-                    if attempt is not None:
-                        await mark_attempt_sent(
-                            db,
-                            attempt,
-                            provider_payload.get("sid"),
-                            provider_payload.get("status"),
-                        )
+                    await mark_attempt_sent(
+                        db,
+                        attempt,
+                        provider_payload.get("sid"),
+                        provider_payload.get("status"),
+                    )
                 except Exception as e:
                     error_message = _provider_error_message(e)
-                    if attempt is not None:
-                        await mark_attempt_failed(db, attempt, error_message, _provider_error_code(e))
-                        await append_audit_event(
-                            db,
-                            tenant.id,
-                            approval.id,
-                            "notification:sms:failed",
-                            error_message,
-                        )
+                    await mark_attempt_failed(db, attempt, error_message, _provider_error_code(e))
+                    await append_audit_event(
+                        db,
+                        tenant.id,
+                        approval.id,
+                        "notification:sms:failed",
+                        error_message,
+                    )
                     logger.warning("sms notify failed: %s", e)
     except Exception as e:
         logger.warning("sms notify failed: %s", e)

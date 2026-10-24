@@ -138,7 +138,7 @@ class ApproverContact(Base):
     destination_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
     destination_last4: Mapped[str] = mapped_column(String, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    consent_status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    consent_status: Mapped[str] = mapped_column(String, nullable=False, default="not_consented")
     consent_source: Mapped[str] = mapped_column(String, nullable=False)
     consent_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
