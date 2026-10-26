@@ -169,7 +169,7 @@ wire_transfer(50_000, \"acct_xyz\")"""
     </p>
 
     <p style="color:#888;font-size:12px;margin-top:24px;">
-      — RegEngine, Inc. &middot;
+      Sentinel by Christopher Sellers &middot;
       <a href="https://pauseapi.app/privacy">Privacy</a> &middot;
       <a href="https://pauseapi.app/terms">Terms</a>
     </p>
@@ -197,7 +197,7 @@ async def send_recovery_email(tenant) -> None:
        workspace and show you a new one. The link expires in 30 minutes.</p>
     <p>If this wasn't you, ignore this email and nothing changes.</p>
     <p style="color:#888;font-size:12px;margin-top:24px;">
-      — RegEngine, Inc.
+      Sentinel by Christopher Sellers
     </p>
     """
     await _send(tenant.email, "Recover your Sentinel API key", html)

@@ -28,7 +28,7 @@ Then address BE-004 malformed-token 500s, BE-008 spreadsheet-formula handling, F
 
 Three new test files add **77 cases: 56 passing and 21 strict expected failures**, mapped to finding IDs. The only other changes are documentation, reports, screenshots and QA-only harnesses under docs/qa/2026-10-02/. Product source, runtime dependency declarations, existing tests, migrations, CI, deployment files and environment files are unchanged.
 
-Each group has its own pass log and UTC command ledger. [PLAN.md](PLAN.md) explains the risk scoring, test pyramid, timed charters and substitutions. [SESSION-LOG.md](SESSION-LOG.md) includes command failures and false starts. [GATE-LOG.md](GATE-LOG.md) contains an independent review, including unmasked bug reproductions and narrowed xfail checks.
+Each group has its own pass log and UTC command ledger. [PLAN.md](PLAN.md) explains the risk scoring, test pyramid, timed charters and substitutions. SESSION-LOG.md (removed: generated dump contained sample data) includes command failures and false starts. [GATE-LOG.md](GATE-LOG.md) contains an independent review, including unmasked bug reproductions and narrowed xfail checks.
 
 ## Verification evidence
 
@@ -50,7 +50,7 @@ Each group has its own pass log and UTC command ledger. [PLAN.md](PLAN.md) expla
 
 Coverage increased by 0.31 percentage points, from 1597/1911 to 1603/1911 executable statements. Existing high coverage did not establish recovery-token or response-contract correctness. Expected-failure execution contributes to coverage; no defect is fixed merely because its lines are covered. Details: [COVERAGE.md](COVERAGE.md).
 
-Screenshots: [desktop](artifacts/ux-chromium-desktop.png), [mobile viewport](artifacts/ux-chromium-mobile-viewport.png), [expanded operation](artifacts/ux-chromium-approval-expanded.png), [empty](artifacts/ux-chromium-empty-schema.png), [error](artifacts/ux-chromium-schema-error.png), [loading](artifacts/ux-chromium-loading.png). Compact [browser evidence](artifacts/ux-browser-summary.json) and [full axe output](artifacts/ux-browser-report.json) include versions and selectors.
+Screenshots: desktop (removed: generated dump contained sample data), mobile viewport (removed: generated dump contained sample data), expanded operation (removed: generated dump contained sample data), empty (removed: generated dump contained sample data), error (removed: generated dump contained sample data), loading (removed: generated dump contained sample data). Compact browser evidence (removed: generated dump contained sample data) and full axe output (removed: generated dump contained sample data) include versions and selectors.
 
 ## What remains untested and why
 
@@ -63,6 +63,6 @@ Screenshots: [desktop](artifacts/ux-chromium-desktop.png), [mobile viewport](art
 
 No commits, pushes, merges, deploys or product behavior changes were made. No environment/credential files were read and no production systems were exercised. An attempted read-only Git history scan triggered automatic missing-object retrieval and failed; that dead end is explicitly recorded rather than treated as a completed scan.
 
-Final artifact validation: all local Markdown evidence links resolve; FINDINGS.md has 16 rows with all eight required columns; all five mandatory docs exist. [Added-content secret scan](artifacts/gitleaks-added-content.json) is clean. The orchestrator still owns its independent scan and publishing steps.
+Final artifact validation: all local Markdown evidence links resolve; FINDINGS.md has 16 rows with all eight required columns; all five mandatory docs exist. Added-content secret scan (removed: generated dump contained sample data) is clean. The orchestrator still owns its independent scan and publishing steps.
 
 Fix pass: see FIXES.md

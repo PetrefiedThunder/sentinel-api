@@ -34,6 +34,10 @@ from app.routers import approvals, audit, tenants, twilio_webhooks, webhooks
 from app.services import onboarding
 from app.services.contacts import destination_hash
 
+# +999 is not an assigned ITU country code, so these can never be real numbers.
+QA_PHONE_CONSENTED = "+9990000001"
+QA_PHONE_UNCONSENTED = "+9990000002"
+
 
 @pytest_asyncio.fixture
 async def qa_api(monkeypatch):
@@ -60,7 +64,10 @@ async def qa_api(monkeypatch):
         for name in ("owner", "other"):
             tenant_id = f"ten_qa_{name}"
             session.add(
-                Tenant(id=tenant_id, name=name, email=f"{name}@example.invalid", mode="test")
+                Tenant(
+                    id=tenant_id, name=name, mode="test",
+                    email=f"{secrets.token_hex(8)}@example.invalid",
+                )
             )
             await session.flush()
             raw, prefix, key_hash = generate_api_key(mode="test")
@@ -69,8 +76,10 @@ async def qa_api(monkeypatch):
             session.add(
                 ApproverContact(
                     id=f"con_qa_{name}", tenant_id=tenant_id, channel="sms",
-                    destination="+15551230000", destination_hash=destination_hash("+15551230000"),
-                    destination_last4="0000", consent_status="active", consent_source="qa",
+                    destination=QA_PHONE_CONSENTED,
+                    destination_hash=destination_hash(QA_PHONE_CONSENTED),
+                    destination_last4=QA_PHONE_CONSENTED[-4:],
+                    consent_status="active", consent_source="qa",
                 )
             )
         raw, prefix, key_hash = generate_api_key(mode="test")
@@ -143,7 +152,10 @@ async def test_auth_permissions_matrix_preserves_foreign_state(qa_api, identity,
 
 
 async def test_same_idempotency_key_is_isolated_between_real_authenticated_tenants(qa_api):
-    payload = {"function_name": "qa_action", "approvers": ["qa@example.invalid"]}
+    payload = {
+        "function_name": "qa_action",
+        "approvers": [f"{secrets.token_hex(8)}@example.invalid"],
+    }
     responses = []
     for name in ("owner", "other"):
         headers = {**bearer(qa_api, name), "Idempotency-Key": "qa-shared-key"}
@@ -235,7 +247,7 @@ async def test_recovered_key_keeps_test_workspace_mode(qa_api):
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-006: fallback SMS approvers skip create-time consent validation")
 async def test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver(qa_api):
-    destination = "sms:+15551234567"
+    destination = f"sms:{QA_PHONE_UNCONSENTED}"
     payload = {"function_name": "qa_action", "approvers": [destination]}
     explicit = await qa_api.client.post("/v1/approvals", json=payload, headers=bearer(qa_api))
     if explicit.status_code != 400:
@@ -263,7 +275,7 @@ async def test_unsigned_twilio_callback_cannot_change_multiple_tenants(
         await session.commit()
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", secrets.token_hex(32) if configured else "")
     response = await qa_api.client.post(
-        "/webhooks/twilio/inbound", data={"From": "+15551230000", "Body": keyword}
+        "/webhooks/twilio/inbound", data={"From": QA_PHONE_CONSENTED, "Body": keyword}
     )
     async with qa_api.sessions() as session:
         contacts = (await session.scalars(select(ApproverContact))).all()
@@ -279,8 +291,8 @@ async def test_be007_unsigned_status_callback_preserves_attempt_and_audit(qa_api
     async with qa_api.sessions() as session:
         session.add(NotificationAttempt(
             id="nat_qa_owner", tenant_id="ten_qa_owner", action_id="act_qa_owner",
-            channel="sms", destination_hash=destination_hash("+15551230000"),
-            destination_last4="0000", provider="twilio", provider_message_sid="SMqa",
+            channel="sms", destination_hash=destination_hash(QA_PHONE_CONSENTED),
+            destination_last4=QA_PHONE_CONSENTED[-4:], provider="twilio", provider_message_sid="SMqa",
             provider_status="accepted",
         ))
         await session.commit()

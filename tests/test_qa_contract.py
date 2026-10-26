@@ -7,6 +7,7 @@ No provider calls, database sockets, or application background bus are needed.
 import csv
 import io
 import json
+import secrets
 import socket
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from app.models import Tenant
 PAYLOAD = {
     "function_name": "qa_contract_action",
     "arguments": {"sample": "synthetic"},
-    "approvers": ["reviewer@example.com"],
+    "approvers": [f"qa-contract-{secrets.token_hex(8)}@example.invalid"],
 }
 
 
@@ -50,7 +51,10 @@ async def contract_client(monkeypatch):
             await connection.run_sync(Base.metadata.create_all)
         async with async_sessionmaker(engine, expire_on_commit=False)() as session:
             tenant = Tenant(
-                id="ten_qa_contract", name="QA Contract", email="qa@example.com", mode="test"
+                id="ten_qa_contract",
+                name="QA Contract",
+                email=f"qa-contract-{secrets.token_hex(8)}@example.invalid",
+                mode="test",
             )
             session.add(tenant)
             await session.commit()
