@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from _qa_values import rbase_url, rhex, rid
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth import get_current_tenant
@@ -20,9 +21,12 @@ from app.db import Base, get_db
 from app.main import app
 from app.models import Tenant
 
+CONTRACT_TENANT_ID = rid("ten")
+CONTRACT_TENANT_NAME = rhex()
+
 PAYLOAD = {
     "function_name": "qa_contract_action",
-    "arguments": {"sample": "synthetic"},
+    "arguments": {"sample": rhex()},
     "approvers": [f"qa-contract-{secrets.token_hex(8)}@example.invalid"],
 }
 
@@ -51,8 +55,8 @@ async def contract_client(monkeypatch):
             await connection.run_sync(Base.metadata.create_all)
         async with async_sessionmaker(engine, expire_on_commit=False)() as session:
             tenant = Tenant(
-                id="ten_qa_contract",
-                name="QA Contract",
+                id=CONTRACT_TENANT_ID,
+                name=CONTRACT_TENANT_NAME,
                 email=f"qa-contract-{secrets.token_hex(8)}@example.invalid",
                 mode="test",
             )
@@ -68,7 +72,7 @@ async def contract_client(monkeypatch):
             app.dependency_overrides[get_db] = local_database
             app.dependency_overrides[get_current_tenant] = local_tenant
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://qa.invalid"
+                transport=httpx.ASGITransport(app=app), base_url=rbase_url()
             ) as client:
                 yield client
     finally:
@@ -138,7 +142,7 @@ async def test_openapi_csv_media_type_matches_runtime(contract_client):
     documented = app.openapi()["paths"]["/v1/audit-events.csv"]["get"]["responses"]["200"]
     assert media_type == "text/csv"
     assert documented["content"] == {"text/csv": {"schema": {"type": "string"}}}
-    assert response.headers["content-disposition"] == 'attachment; filename="audit-ten_qa_contract.csv"'
+    assert response.headers["content-disposition"] == f'attachment; filename="audit-{CONTRACT_TENANT_ID}.csv"'
     assert next(csv.reader(io.StringIO(response.text))) == [
         "id", "action_id", "created_at_utc", "execution_result_json", "error", "prev_hash", "event_hash"
     ]

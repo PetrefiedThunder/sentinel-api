@@ -2,6 +2,7 @@
 
 import asyncio
 import ipaddress
+import secrets
 import socket
 import ssl
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 import httpcore
 import httpx
 import pytest
+from _qa_values import rbase_url, rhex, rid
 from fastapi import FastAPI
 
 import app.db
@@ -24,7 +26,7 @@ from app.services import webhooks
     [
         "http://example.com/hook",
         "https://",
-        "https://user:synthetic@example.com/hook",
+        f"https://user:{rhex()}@example.com/hook",
         "https://127.0.0.1/hook",
         "https://10.0.0.1/hook",
         "https://169.254.169.254/hook",
@@ -53,9 +55,9 @@ async def test_be003_registration_rejects_unsafe_destinations(url):
     application = FastAPI()
     application.include_router(router.router, prefix="/v1/webhooks")
     application.dependency_overrides[get_db] = lambda: db
-    application.dependency_overrides[get_current_tenant] = lambda: SimpleNamespace(id="ten_qa")
+    application.dependency_overrides[get_current_tenant] = lambda: SimpleNamespace(id=rid("ten"))
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=application), base_url="http://qa.invalid"
+        transport=httpx.ASGITransport(app=application), base_url=rbase_url()
     ) as client:
         response = await client.post("/v1/webhooks", json={"url": url})
     assert response.status_code == 400
@@ -68,11 +70,12 @@ def deliver(monkeypatch):
     real_client = httpx.AsyncClient
 
     async def invoke(url, *, addresses=None, response_status=200, dns_error=None):
+        tenant_id = rid("ten")
         result = SimpleNamespace(
             connections=[], tls=[], writes=[], records=[], dns_queries=[], client_options=[]
         )
         endpoint = WebhookEndpoint(
-            id="whk_qa", tenant_id="ten_qa", url=url, secret="synthetic-signing-value"
+            id=rid("whk"), tenant_id=tenant_id, url=url, secret=secrets.token_hex(32)
         )
 
         class Session:
@@ -151,9 +154,9 @@ def deliver(monkeypatch):
         monkeypatch.setattr(webhooks.httpx, "AsyncClient", client)
         monkeypatch.setattr(webhooks, "BACKOFF_SECONDS", [0, 0, 0])
         approval = Approval(
-            id="act_qa",
-            tenant_id="ten_qa",
-            function_name="qa",
+            id=rid("act"),
+            tenant_id=tenant_id,
+            function_name=rid("fn"),
             decision="approved",
             arguments={},
         )
@@ -211,7 +214,7 @@ async def test_be003_delivery_rejects_every_unsafe_dns_answer(deliver, addresses
         "http://127.0.0.1/internal",
         "https://10.0.0.1/internal",
         "https://[::1]/internal",
-        "https://user:synthetic@example.com/hook",
+        f"https://user:{rhex()}@example.com/hook",
     ],
 )
 async def test_be003_legacy_unsafe_endpoint_is_blocked_before_dns(deliver, url):

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import pytest_asyncio
+from _qa_values import rbase_url, rhex, rhost, rid, rphone
 from fastapi import FastAPI
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -34,9 +35,23 @@ from app.routers import approvals, audit, tenants, twilio_webhooks, webhooks
 from app.services import onboarding
 from app.services.contacts import destination_hash
 
-# +999 is not an assigned ITU country code, so these can never be real numbers.
-QA_PHONE_CONSENTED = "+9990000001"
-QA_PHONE_UNCONSENTED = "+9990000002"
+# Generated per run; +999 is not an assigned ITU country code.
+QA_PHONE_CONSENTED = rphone()
+QA_PHONE_UNCONSENTED = rphone()
+while QA_PHONE_UNCONSENTED == QA_PHONE_CONSENTED:
+    QA_PHONE_UNCONSENTED = rphone()
+TENANT_IDS = {"owner": rid("ten"), "other": rid("ten")}
+CONTACT_IDS = {"owner": rid("con"), "other": rid("con")}
+ACTION_ID = rid("act")
+WEBHOOK_ID = rid("whk")
+ATTEMPT_ID = rid("nat")
+MESSAGE_SID = f"SM{rhex(16)}"
+FUNCTION_NAME = rid("fn")
+SHARED_KEY = rhex()
+INVALID_KEY = rhex()
+QA_TEXT = rhex()
+HOOK_URL = f"https://{rhost()}/hook"
+BASE_URL = rbase_url()
 
 
 @pytest_asyncio.fixture
@@ -62,7 +77,7 @@ async def qa_api(monkeypatch):
     keys = {}
     async with factory() as session:
         for name in ("owner", "other"):
-            tenant_id = f"ten_qa_{name}"
+            tenant_id = TENANT_IDS[name]
             session.add(
                 Tenant(
                     id=tenant_id, name=name, mode="test",
@@ -75,28 +90,28 @@ async def qa_api(monkeypatch):
             session.add(ApiKey(tenant_id=tenant_id, key_hash=key_hash, prefix=prefix))
             session.add(
                 ApproverContact(
-                    id=f"con_qa_{name}", tenant_id=tenant_id, channel="sms",
+                    id=CONTACT_IDS[name], tenant_id=tenant_id, channel="sms",
                     destination=QA_PHONE_CONSENTED,
                     destination_hash=destination_hash(QA_PHONE_CONSENTED),
                     destination_last4=QA_PHONE_CONSENTED[-4:],
-                    consent_status="active", consent_source="qa",
+                    consent_status="active", consent_source=QA_TEXT,
                 )
             )
         raw, prefix, key_hash = generate_api_key(mode="test")
         keys["revoked"] = raw
         session.add(
             ApiKey(
-                tenant_id="ten_qa_owner", key_hash=key_hash, prefix=prefix,
+                tenant_id=TENANT_IDS["owner"], key_hash=key_hash, prefix=prefix,
                 revoked_at=datetime.now(UTC).replace(tzinfo=None),
             )
         )
         session.add(
-            Approval(id="act_qa_owner", tenant_id="ten_qa_owner", function_name="qa_action")
+            Approval(id=ACTION_ID, tenant_id=TENANT_IDS["owner"], function_name=FUNCTION_NAME)
         )
         session.add(
             WebhookEndpoint(
-                id="whk_qa_owner", tenant_id="ten_qa_owner",
-                url="https://example.invalid/hook", secret=secrets.token_hex(32),
+                id=WEBHOOK_ID, tenant_id=TENANT_IDS["owner"],
+                url=HOOK_URL, secret=secrets.token_hex(32),
             )
         )
         await session.commit()
@@ -114,7 +129,7 @@ async def qa_api(monkeypatch):
     app.dependency_overrides[get_db] = database
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://qa.local") as client:
+        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
             yield SimpleNamespace(client=client, sessions=factory, keys=keys)
     finally:
         await engine.dispose()
@@ -128,49 +143,49 @@ def bearer(qa_api, name="owner"):
 @pytest.mark.parametrize(
     ("method", "path", "payload"),
     [
-        ("GET", "/v1/approvals/act_qa_owner", None),
-        ("GET", "/v1/approvals/act_qa_owner/wait?timeout=1", None),
-        ("POST", "/v1/approvals/act_qa_owner/decision",
-         {"decision": "approved", "decided_by": "qa"}),
+        ("GET", f"/v1/approvals/{ACTION_ID}", None),
+        ("GET", f"/v1/approvals/{ACTION_ID}/wait?timeout=1", None),
+        ("POST", f"/v1/approvals/{ACTION_ID}/decision",
+         {"decision": "approved", "decided_by": QA_TEXT}),
         ("POST", "/v1/audit-events",
-         {"action_id": "act_qa_owner", "execution_result": "qa"}),
-        ("DELETE", "/v1/webhooks/whk_qa_owner", None),
+         {"action_id": ACTION_ID, "execution_result": QA_TEXT}),
+        ("DELETE", f"/v1/webhooks/{WEBHOOK_ID}", None),
     ],
 )
 async def test_auth_permissions_matrix_preserves_foreign_state(qa_api, identity, method, path, payload):
     headers = {} if identity == "missing" else (
-        {"Authorization": "Bearer not-a-real-key"} if identity == "invalid"
+        {"Authorization": f"Bearer {INVALID_KEY}"} if identity == "invalid"
         else bearer(qa_api, identity)
     )
     response = await qa_api.client.request(method, path, json=payload, headers=headers)
     expected = 404 if identity == "other" else (422 if identity == "missing" else 401)
     assert response.status_code == expected
     async with qa_api.sessions() as session:
-        assert (await session.get(Approval, "act_qa_owner")).decision == "pending"
-        assert (await session.get(WebhookEndpoint, "whk_qa_owner")).disabled_at is None
+        assert (await session.get(Approval, ACTION_ID)).decision == "pending"
+        assert (await session.get(WebhookEndpoint, WEBHOOK_ID)).disabled_at is None
         assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 0
 
 
 async def test_same_idempotency_key_is_isolated_between_real_authenticated_tenants(qa_api):
     payload = {
-        "function_name": "qa_action",
+        "function_name": FUNCTION_NAME,
         "approvers": [f"{secrets.token_hex(8)}@example.invalid"],
     }
     responses = []
     for name in ("owner", "other"):
-        headers = {**bearer(qa_api, name), "Idempotency-Key": "qa-shared-key"}
+        headers = {**bearer(qa_api, name), "Idempotency-Key": SHARED_KEY}
         first = await qa_api.client.post("/v1/approvals", json=payload, headers=headers)
         replay = await qa_api.client.post("/v1/approvals", json=payload, headers=headers)
         assert first.status_code == replay.status_code == 200
         assert first.json() == replay.json()
-        assert first.json()["tenant_id"] == f"ten_qa_{name}"
+        assert first.json()["tenant_id"] == TENANT_IDS[name]
         responses.append(first.json())
     assert responses[0]["id"] != responses[1]["id"]
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-001: recovery token can rotate keys repeatedly")
 async def test_recovery_token_is_single_use_and_preserves_first_recovered_key(qa_api):
-    token = onboarding.create_token("recover", "ten_qa_owner", ttl_seconds=300)
+    token = onboarding.create_token("recover", TENANT_IDS["owner"], ttl_seconds=300)
     first = await qa_api.client.post("/v1/tenants/recover/exchange", json={"token": token})
     if first.status_code != 200:
         pytest.fail("Recovery precondition failed: first valid exchange did not succeed")
@@ -205,7 +220,7 @@ async def test_webhook_registration_rejects_private_network_targets(qa_api, sche
 
 
 @pytest.mark.parametrize(
-    "path", ["/v1/approvals/act_qa_owner/token-decision",
+    "path", [f"/v1/approvals/{ACTION_ID}/token-decision",
              "/v1/tenants/recover/exchange", "/v1/tenants/verify-email"],
 )
 @pytest.mark.parametrize("token", ["", "without-dot", "payload.bad-signature"])
@@ -215,7 +230,7 @@ async def test_malformed_ascii_token_classes_fail_closed(qa_api, path, token):
 
 
 @pytest.mark.parametrize(
-    "path", ["/v1/approvals/act_qa_owner/token-decision",
+    "path", [f"/v1/approvals/{ACTION_ID}/token-decision",
              "/v1/tenants/recover/exchange", "/v1/tenants/verify-email"],
 )
 @pytest.mark.parametrize(
@@ -230,14 +245,14 @@ async def test_unicode_token_signature_is_a_client_error(qa_api, path, token):
     )
     assert response.status_code in (400, 401)
     async with qa_api.sessions() as session:
-        assert (await session.get(Approval, "act_qa_owner")).decision == "pending"
-        assert (await session.get(Tenant, "ten_qa_owner")).email_verified_at is None
+        assert (await session.get(Approval, ACTION_ID)).decision == "pending"
+        assert (await session.get(Tenant, TENANT_IDS["owner"])).email_verified_at is None
         assert await session.scalar(select(func.count()).select_from(ApiKey)) == 3
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-005: recovery emits a live key prefix for a test workspace")
 async def test_recovered_key_keeps_test_workspace_mode(qa_api):
-    token = onboarding.create_token("recover", "ten_qa_owner", ttl_seconds=300)
+    token = onboarding.create_token("recover", TENANT_IDS["owner"], ttl_seconds=300)
     response = await qa_api.client.post("/v1/tenants/recover/exchange", json={"token": token})
     if response.status_code != 200:
         pytest.fail("Recovery precondition failed: valid exchange did not succeed")
@@ -248,7 +263,7 @@ async def test_recovered_key_keeps_test_workspace_mode(qa_api):
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="BE-006: fallback SMS approvers skip create-time consent validation")
 async def test_default_sms_approver_obeys_same_consent_requirement_as_explicit_approver(qa_api):
     destination = f"sms:{QA_PHONE_UNCONSENTED}"
-    payload = {"function_name": "qa_action", "approvers": [destination]}
+    payload = {"function_name": FUNCTION_NAME, "approvers": [destination]}
     explicit = await qa_api.client.post("/v1/approvals", json=payload, headers=bearer(qa_api))
     if explicit.status_code != 400:
         pytest.fail("Consent precondition failed: explicit unconsented destination was not rejected")
@@ -258,7 +273,7 @@ async def test_default_sms_approver_obeys_same_consent_requirement_as_explicit_a
     if settings_response.status_code != 200:
         pytest.fail("Consent precondition failed: default approver setting was not saved")
     fallback = await qa_api.client.post(
-        "/v1/approvals", json={"function_name": "qa_action"}, headers=bearer(qa_api)
+        "/v1/approvals", json={"function_name": FUNCTION_NAME}, headers=bearer(qa_api)
     )
     assert fallback.status_code == 400
 
@@ -290,18 +305,18 @@ async def test_unsigned_twilio_callback_cannot_change_multiple_tenants(
 async def test_be007_unsigned_status_callback_preserves_attempt_and_audit(qa_api, monkeypatch, configured):
     async with qa_api.sessions() as session:
         session.add(NotificationAttempt(
-            id="nat_qa_owner", tenant_id="ten_qa_owner", action_id="act_qa_owner",
+            id=ATTEMPT_ID, tenant_id=TENANT_IDS["owner"], action_id=ACTION_ID,
             channel="sms", destination_hash=destination_hash(QA_PHONE_CONSENTED),
-            destination_last4=QA_PHONE_CONSENTED[-4:], provider="twilio", provider_message_sid="SMqa",
+            destination_last4=QA_PHONE_CONSENTED[-4:], provider="twilio", provider_message_sid=MESSAGE_SID,
             provider_status="accepted",
         ))
         await session.commit()
     monkeypatch.setattr(settings, "TWILIO_AUTH_TOKEN", secrets.token_hex(32) if configured else "")
     response = await qa_api.client.post(
-        "/webhooks/twilio/status", data={"MessageSid": "SMqa", "MessageStatus": "delivered"}
+        "/webhooks/twilio/status", data={"MessageSid": MESSAGE_SID, "MessageStatus": "delivered"}
     )
     async with qa_api.sessions() as session:
-        attempt = await session.get(NotificationAttempt, "nat_qa_owner")
+        attempt = await session.get(NotificationAttempt, ATTEMPT_ID)
         assert attempt.provider_status == "accepted"
         assert await session.scalar(select(func.count()).select_from(AuditEvent)) == 0
     assert response.status_code == (401 if configured else 503)
@@ -310,7 +325,7 @@ async def test_be007_unsigned_status_callback_preserves_attempt_and_audit(qa_api
 async def test_audit_csv_neutralizes_spreadsheet_formula_cells(qa_api):
     response = await qa_api.client.post(
         "/v1/audit-events",
-        json={"action_id": "act_qa_owner", "execution_result": "failed", "error": "=1+1"},
+        json={"action_id": ACTION_ID, "execution_result": "failed", "error": "=1+1"},
         headers=bearer(qa_api),
     )
     if response.status_code != 200:

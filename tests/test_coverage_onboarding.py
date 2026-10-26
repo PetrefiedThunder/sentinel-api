@@ -3,9 +3,14 @@ import secrets
 from types import SimpleNamespace
 
 import pytest
+from _qa_values import rhex, rid
 
 import app.services.onboarding as onboarding
 from app.config import settings
+
+TENANT_ID = rid("ten")
+TENANT_NAME = rhex()
+TENANT_EMAIL = f"{rhex()}@example.invalid"
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +24,7 @@ def strong_signing_configuration(monkeypatch):
 def test_be002_onboarding_rejects_weak_signing_and_verification(
     monkeypatch, purpose, configuration, operation
 ):
-    token = onboarding.create_token(purpose, "ten_abc", ttl_seconds=3600)
+    token = onboarding.create_token(purpose, TENANT_ID, ttl_seconds=3600)
     weak_value = {
         "default": type(settings).model_fields["JWT_SECRET"].default,
         "empty": "",
@@ -28,14 +33,14 @@ def test_be002_onboarding_rejects_weak_signing_and_verification(
     monkeypatch.setattr(settings, "JWT_SECRET", weak_value)
     with pytest.raises(RuntimeError, match="JWT_SECRET"):
         if operation == "sign":
-            onboarding.create_token(purpose, "ten_abc", ttl_seconds=3600)
+            onboarding.create_token(purpose, TENANT_ID, ttl_seconds=3600)
         else:
             onboarding.verify_token(token, expected_purpose=purpose)
 
 
 def test_token_round_trip_verify():
-    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
-    assert onboarding.verify_token(token, expected_purpose="verify") == "ten_abc"
+    token = onboarding.create_token("verify", TENANT_ID, ttl_seconds=3600)
+    assert onboarding.verify_token(token, expected_purpose="verify") == TENANT_ID
 
 
 def test_verify_token_malformed():
@@ -44,20 +49,20 @@ def test_verify_token_malformed():
 
 
 def test_verify_token_bad_signature():
-    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
+    token = onboarding.create_token("verify", TENANT_ID, ttl_seconds=3600)
     part, _sig = token.split(".", 1)
     with pytest.raises(onboarding.InvalidOnboardingToken):
         onboarding.verify_token(f"{part}.tampered", expected_purpose="verify")
 
 
 def test_verify_token_wrong_purpose():
-    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=3600)
+    token = onboarding.create_token("verify", TENANT_ID, ttl_seconds=3600)
     with pytest.raises(onboarding.InvalidOnboardingToken):
         onboarding.verify_token(token, expected_purpose="recover")
 
 
 def test_verify_token_expired():
-    token = onboarding.create_token("verify", "ten_abc", ttl_seconds=-1)
+    token = onboarding.create_token("verify", TENANT_ID, ttl_seconds=-1)
     with pytest.raises(onboarding.InvalidOnboardingToken):
         onboarding.verify_token(token, expected_purpose="verify")
 
@@ -88,9 +93,9 @@ def test_send_welcome_email_invokes_send(monkeypatch):
         captured["html"] = html
 
     monkeypatch.setattr(onboarding, "_send", fake_send)
-    tenant = SimpleNamespace(id="ten_abc", name="Chris", email="chris@acme.io")
-    asyncio.run(onboarding.send_welcome_email(tenant, "sk_live_supersecretkey123456"))
-    assert captured["to"] == "chris@acme.io"
+    tenant = SimpleNamespace(id=TENANT_ID, name=TENANT_NAME, email=TENANT_EMAIL)
+    asyncio.run(onboarding.send_welcome_email(tenant, f"sk_live_{rhex(16)}"))
+    assert captured["to"] == TENANT_EMAIL
     assert "verify" in captured["subject"].lower()
     assert "Verify email" in captured["html"]
 
@@ -105,9 +110,9 @@ def test_send_recovery_email_invokes_send(monkeypatch):
         captured["subject"] = subject
 
     monkeypatch.setattr(onboarding, "_send", fake_send)
-    tenant = SimpleNamespace(id="ten_abc", name="Chris", email="chris@acme.io")
+    tenant = SimpleNamespace(id=TENANT_ID, name=TENANT_NAME, email=TENANT_EMAIL)
     asyncio.run(onboarding.send_recovery_email(tenant))
-    assert captured["to"] == "chris@acme.io"
+    assert captured["to"] == TENANT_EMAIL
     assert "recover" in captured["subject"].lower()
 
 
@@ -115,7 +120,7 @@ def test_send_makes_http_call_with_key(monkeypatch):
     """When RESEND_API_KEY is set, _send POSTs to Resend (mocked httpx)."""
     import asyncio
 
-    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test")
+    monkeypatch.setattr(settings, "RESEND_API_KEY", f"re_{rhex()}")
     posted = {}
 
     class FakeResponse:

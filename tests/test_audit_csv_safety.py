@@ -7,6 +7,7 @@ import json
 import httpx
 import pytest
 import pytest_asyncio
+from _qa_values import rbase_url, rid
 from fastapi import FastAPI
 from test_support import make_sqlite_session
 
@@ -19,7 +20,7 @@ from app.routers import audit
 @pytest_asyncio.fixture
 async def audit_api(monkeypatch):
     engine, session, tenant = await make_sqlite_session()
-    approval = Approval(tenant_id=tenant.id, function_name="qa", decision="approved")
+    approval = Approval(tenant_id=tenant.id, function_name=rid("fn"), decision="approved")
     session.add(approval)
     await session.commit()
 
@@ -36,7 +37,7 @@ async def audit_api(monkeypatch):
     application.dependency_overrides[get_current_tenant] = lambda: tenant
     try:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application), base_url="http://qa.invalid"
+            transport=httpx.ASGITransport(app=application), base_url=rbase_url()
         ) as client:
             yield client, session, approval
     finally:
