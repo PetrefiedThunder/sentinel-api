@@ -194,12 +194,12 @@ async def test_be003_delivery_pins_dns_ip_preserving_host_and_tls(deliver, versi
         ["::ffff:127.0.0.1"],
         ["64:ff9b::7f00:1"],
         ["2002:7f00:1::"],
-        ["93.184.216.34", "127.0.0.1"],
-        ["2606:4700:4700::1111", "::1"],
+        [rpublic_ip(4), "127.0.0.1"],
+        [rpublic_ip(6), "::1"],
     ],
 )
 async def test_be003_delivery_rejects_every_unsafe_dns_answer(deliver, addresses):
-    result = await deliver("https://receiver.example/hook", addresses=addresses)
+    result = await deliver(f"https://{rhost()}/hook", addresses=addresses)
     assert result.connections == []
     assert result.writes == []
     assert len(result.records) == 1
@@ -215,7 +215,7 @@ async def test_be003_delivery_rejects_every_unsafe_dns_answer(deliver, addresses
         "http://127.0.0.1/internal",
         "https://10.0.0.1/internal",
         "https://[::1]/internal",
-        f"https://user:{rhex()}@example.com/hook",
+        f"https://{rhex()}:{rhex()}@{rhost()}/hook",
     ],
 )
 async def test_be003_legacy_unsafe_endpoint_is_blocked_before_dns(deliver, url):
@@ -226,8 +226,9 @@ async def test_be003_legacy_unsafe_endpoint_is_blocked_before_dns(deliver, url):
 
 
 async def test_be003_redirect_to_private_destination_is_not_followed(deliver):
-    result = await deliver("https://receiver.example/hook", response_status=302)
-    assert result.connections == [("93.184.216.34", 443)]
+    address = rpublic_ip()
+    result = await deliver(f"https://{rhost()}/hook", addresses=[address], response_status=302)
+    assert result.connections == [(address, 443)]
     assert all(b"/internal" not in write for write in result.writes)
     # The next retry sees a DNS rebind and must stop before another request.
     assert len(result.dns_queries) == 2
@@ -236,22 +237,18 @@ async def test_be003_redirect_to_private_destination_is_not_followed(deliver):
 
 @pytest.mark.parametrize("error", [socket.gaierror("synthetic DNS failure"), TimeoutError()])
 async def test_be003_dns_failure_is_recorded_without_a_connection(deliver, error):
-    result = await deliver("https://receiver.example/hook", dns_error=error)
+    result = await deliver(f"https://{rhost()}/hook", dns_error=error)
     assert result.connections == []
     assert len(result.records) == 1
     assert result.records[0].delivered_at is None
     assert result.records[0].attempt == webhooks.MAX_ATTEMPTS
 
 
-@pytest.mark.parametrize(
-    ("url", "address", "host"),
-    [
-        ("https://93.184.216.34/hook", "93.184.216.34", "93.184.216.34"),
-        ("https://[2606:4700:4700::1111]/hook", "2606:4700:4700::1111", "[2606:4700:4700::1111]"),
-    ],
-)
-async def test_be003_public_literal_keeps_https_without_dns(deliver, url, address, host):
-    result = await deliver(url)
+@pytest.mark.parametrize("version", [4, 6])
+async def test_be003_public_literal_keeps_https_without_dns(deliver, version):
+    address = rpublic_ip(version)
+    host = address if version == 4 else f"[{address}]"
+    result = await deliver(f"https://{host}/hook")
     assert result.dns_queries == []
     assert result.connections == [(address, 443)]
     assert result.tls == [(address, True, ssl.CERT_REQUIRED)]
@@ -260,6 +257,6 @@ async def test_be003_public_literal_keeps_https_without_dns(deliver, url, addres
 
 
 async def test_be003_empty_dns_result_never_connects(deliver):
-    result = await deliver("https://receiver.example/hook", addresses=[])
+    result = await deliver(f"https://{rhost()}/hook", addresses=[])
     assert result.connections == []
     assert result.records[0].delivered_at is None
