@@ -8,6 +8,8 @@ numbers use +999, which is not an assigned ITU country code.
 import ipaddress
 import secrets
 
+from app.services.webhook_destinations import UnsafeWebhookDestination, _public_address
+
 
 def rhex(n: int = 8) -> str:
     return secrets.token_hex(n)
@@ -40,6 +42,9 @@ def rpublic_ip(version: int = 4) -> str:
     else:
         bits, low = 125, 0x2000 << 112  # 2000::/3, global unicast
     while True:
-        address = ipaddress.ip_address(low + secrets.randbits(bits))
-        if address.is_global and not address.is_multicast:
-            return str(address)
+        candidate = str(ipaddress.ip_address(low + secrets.randbits(bits)))
+        try:
+            # Ask the production validator so generated hosts are always accepted.
+            return _public_address(candidate)
+        except UnsafeWebhookDestination:
+            continue

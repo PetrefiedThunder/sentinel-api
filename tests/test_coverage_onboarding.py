@@ -79,7 +79,7 @@ def test_send_skips_without_resend_key(monkeypatch):
 
     monkeypatch.setattr(settings, "RESEND_API_KEY", "")
     # No network: should return quietly even with a bogus client patched in
-    asyncio.run(onboarding._send("to@x.io", "subj", "<p>hi</p>"))
+    asyncio.run(onboarding._send(TENANT_EMAIL, "subj", "<p>hi</p>"))
 
 
 def test_send_welcome_email_invokes_send(monkeypatch):
@@ -143,6 +143,6 @@ def test_send_makes_http_call_with_key(monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr(onboarding.httpx, "AsyncClient", FakeClient)
-    asyncio.run(onboarding._send("to@x.io", "subj", "<p>hi</p>"))
+    asyncio.run(onboarding._send(TENANT_EMAIL, "subj", "<p>hi</p>"))
     assert posted["url"] == "https://api.resend.com/emails"
-    assert posted["json"]["to"] == ["to@x.io"]
+    assert posted["json"]["to"] == [TENANT_EMAIL]

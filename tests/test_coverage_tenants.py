@@ -13,6 +13,7 @@ from sqlalchemy import select
 from test_support import client_for, make_sqlite_session, run
 
 from app.config import settings
+from app.routers.tenants import BLOCKED_DOMAINS
 from app.models import ApiKey
 from app.services.onboarding import create_token
 
@@ -41,7 +42,7 @@ def test_signup_rejects_personal_email_domain():
     try:
         with client_for(session, tenant) as client:
             resp = client.post(
-                "/v1/tenants/signup", json={"name": "Acme", "email": "joe@gmail.com"}
+                "/v1/tenants/signup", json={"name": rhex(), "email": f"{rhex()}@{secrets.choice(sorted(BLOCKED_DOMAINS))}"}
             )
         assert resp.status_code == 400
         assert "Work email" in resp.json()["detail"]
@@ -56,7 +57,7 @@ def test_signup_creates_test_tenant_and_api_key():
         with client_for(session, tenant) as client:
             resp = client.post(
                 "/v1/tenants/signup",
-                json={"name": "Acme", "email": "founder@acme.io", "mode": "test"},
+                json={"name": rhex(), "email": remail(), "mode": "test"},
             )
         assert resp.status_code == 200
         body = resp.json()
@@ -71,17 +72,18 @@ def test_signup_creates_test_tenant_and_api_key():
 
 
 def test_signup_rejects_duplicate_email():
+    email = remail()
     engine, session, tenant = run(make_sqlite_session())
     try:
         with client_for(session, tenant) as client:
             first = client.post(
                 "/v1/tenants/signup",
-                json={"name": "Acme", "email": "dup@acme.io", "mode": "test"},
+                json={"name": rhex(), "email": email, "mode": "test"},
             )
             assert first.status_code == 200
             second = client.post(
                 "/v1/tenants/signup",
-                json={"name": "Acme2", "email": "dup@acme.io", "mode": "test"},
+                json={"name": rhex(), "email": email, "mode": "test"},
             )
         assert second.status_code == 400
         assert "already registered" in second.json()["detail"]
