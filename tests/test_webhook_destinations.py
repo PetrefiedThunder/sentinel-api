@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import httpcore
 import httpx
 import pytest
-from _qa_values import rbase_url, rhex, rid
+from _qa_values import rbase_url, rhex, rhost, rid, rpublic_ip
 from fastapi import FastAPI
 
 import app.db
@@ -24,9 +24,9 @@ from app.services import webhooks
 @pytest.mark.parametrize(
     "url",
     [
-        "http://example.com/hook",
+        f"http://{rhost()}/hook",
         "https://",
-        f"https://user:{rhex()}@example.com/hook",
+        f"https://{rhex()}:{rhex()}@{rhost()}/hook",
         "https://127.0.0.1/hook",
         "https://10.0.0.1/hook",
         "https://169.254.169.254/hook",
@@ -102,7 +102,7 @@ def deliver(monkeypatch):
                 raise dns_error
             # A second DNS lookup would rebind to loopback.
             selected = (
-                (["93.184.216.34"] if addresses is None else addresses)
+                ([rpublic_ip()] if addresses is None else addresses)
                 if len(result.dns_queries) == 1
                 else ["127.0.0.1"]
             )
@@ -166,15 +166,16 @@ def deliver(monkeypatch):
     return invoke
 
 
-@pytest.mark.parametrize("address", ["93.184.216.34", "2606:4700:4700::1111"])
-async def test_be003_delivery_pins_dns_ip_preserving_host_and_tls(deliver, address):
-    result = await deliver("https://receiver.example:8443/a%20b?event=yes", addresses=[address])
-    assert result.dns_queries == [("receiver.example", 8443)]
+@pytest.mark.parametrize("version", [4, 6])
+async def test_be003_delivery_pins_dns_ip_preserving_host_and_tls(deliver, version):
+    address, host = rpublic_ip(version), rhost()
+    result = await deliver(f"https://{host}:8443/a%20b?event=yes", addresses=[address])
+    assert result.dns_queries == [(host, 8443)]
     assert result.connections == [(address, 8443)]
-    assert result.tls == [("receiver.example", True, ssl.CERT_REQUIRED)]
+    assert result.tls == [(host, True, ssl.CERT_REQUIRED)]
     wire = b"".join(result.writes)
     assert b"POST /a%20b?event=yes HTTP/1.1" in wire
-    assert b"Host: receiver.example:8443" in wire
+    assert f"Host: {host}:8443".encode() in wire
     assert result.client_options[0]["trust_env"] is False
     assert result.client_options[0]["follow_redirects"] is False
     assert result.records[0].status_code == 200

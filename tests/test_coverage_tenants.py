@@ -8,6 +8,7 @@ background tasks that no-op without RESEND_API_KEY.
 import secrets
 
 import pytest
+from _qa_values import remail, rhex, rid, rphone
 from sqlalchemy import select
 from test_support import client_for, make_sqlite_session, run
 
@@ -26,7 +27,7 @@ def test_signup_rejects_invalid_email():
     try:
         with client_for(session, tenant) as client:
             resp = client.post(
-                "/v1/tenants/signup", json={"name": "Acme", "email": "no-at-sign"}
+                "/v1/tenants/signup", json={"name": rhex(), "email": rhex()}
             )
         assert resp.status_code == 400
         assert "Invalid email" in resp.json()["detail"]
@@ -118,7 +119,7 @@ def test_verify_email_rejects_bad_token():
 
 def test_verify_email_404_for_unknown_tenant():
     engine, session, tenant = run(make_sqlite_session())
-    token = create_token("verify", "ten_does_not_exist", ttl_seconds=3600)
+    token = create_token("verify", rid("ten"), ttl_seconds=3600)
     try:
         with client_for(session, tenant) as client:
             resp = client.post("/v1/tenants/verify-email", json={"token": token})
@@ -133,7 +134,7 @@ def test_recover_request_always_204_for_unknown_email():
     try:
         with client_for(session, tenant) as client:
             resp = client.post(
-                "/v1/tenants/recover/request", json={"email": "nobody@nowhere.io"}
+                "/v1/tenants/recover/request", json={"email": remail()}
             )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
@@ -146,7 +147,7 @@ def test_recover_request_no_at_sign_still_ok():
     engine, session, tenant = run(make_sqlite_session())
     try:
         with client_for(session, tenant) as client:
-            resp = client.post("/v1/tenants/recover/request", json={"email": "bogus"})
+            resp = client.post("/v1/tenants/recover/request", json={"email": rhex()})
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
     finally:
@@ -170,8 +171,10 @@ def test_recover_request_known_email_queues_email():
 
 def test_recover_exchange_rotates_keys():
     engine, session, tenant = run(make_sqlite_session())
-    # seed an existing active key
-    old = ApiKey(tenant_id=tenant.id, key_hash="h", prefix="sk_old", name="default")
+    # an existing active key, generated for this run
+    old = ApiKey(
+        tenant_id=tenant.id, key_hash=rhex(32), prefix=f"sk_{rhex(4)}", name="default"
+    )
     session.add(old)
     run(session.commit())
     token = create_token("recover", tenant.id, ttl_seconds=3600)
@@ -206,7 +209,7 @@ def test_recover_exchange_rejects_bad_token():
 
 def test_recover_exchange_404_for_missing_tenant():
     engine, session, tenant = run(make_sqlite_session())
-    token = create_token("recover", "ten_missing", ttl_seconds=3600)
+    token = create_token("recover", rid("ten"), ttl_seconds=3600)
     try:
         with client_for(session, tenant) as client:
             resp = client.post("/v1/tenants/recover/exchange", json={"token": token})
@@ -233,14 +236,15 @@ def test_get_me_serializes_tenant():
 
 def test_update_me_sets_default_approvers():
     engine, session, tenant = run(make_sqlite_session())
+    email, sms = remail(), f"sms:{rphone()}"
     try:
         with client_for(session, tenant) as client:
             resp = client.patch(
                 "/v1/tenants/me",
-                json={"default_approvers": [" boss@acme.io ", "sms:+15551230000"]},
+                json={"default_approvers": [f" {email} ", sms]},
             )
         assert resp.status_code == 200
-        assert resp.json()["default_approvers"] == ["boss@acme.io", "sms:+15551230000"]
+        assert resp.json()["default_approvers"] == [email, sms]
     finally:
         run(session.close())
         run(engine.dispose())
@@ -251,7 +255,7 @@ def test_update_me_rejects_invalid_approver():
     try:
         with client_for(session, tenant) as client:
             resp = client.patch(
-                "/v1/tenants/me", json={"default_approvers": ["not-an-approver"]}
+                "/v1/tenants/me", json={"default_approvers": [rhex()]}
             )
         assert resp.status_code == 400
         assert "Invalid approver" in resp.json()["detail"]

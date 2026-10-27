@@ -7,13 +7,12 @@ No provider calls, database sockets, or application background bus are needed.
 import csv
 import io
 import json
-import secrets
 import socket
 from pathlib import Path
 
 import httpx
 import pytest
-from _qa_values import rbase_url, rhex, rid
+from _qa_values import rbase_url, remail, rhex, rid
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth import get_current_tenant
@@ -25,9 +24,9 @@ CONTRACT_TENANT_ID = rid("ten")
 CONTRACT_TENANT_NAME = rhex()
 
 PAYLOAD = {
-    "function_name": "qa_contract_action",
-    "arguments": {"sample": rhex()},
-    "approvers": [f"qa-contract-{secrets.token_hex(8)}@example.invalid"],
+    "function_name": f"fn_{rhex()}",
+    "arguments": {rhex(): rhex()},
+    "approvers": [remail()],
 }
 
 
@@ -57,7 +56,7 @@ async def contract_client(monkeypatch):
             tenant = Tenant(
                 id=CONTRACT_TENANT_ID,
                 name=CONTRACT_TENANT_NAME,
-                email=f"qa-contract-{secrets.token_hex(8)}@example.invalid",
+                email=remail(),
                 mode="test",
             )
             session.add(tenant)
@@ -206,8 +205,9 @@ async def test_csv_quotes_unicode_commas_and_newlines(contract_client):
     assert created.status_code == 200
     payload = {
         "action_id": created.json()["action_id"],
-        "execution_result": 'Completed, "reviewed"\nCaf\u00e9',
-        "error": 'Synthetic, "error"\nSecond line',
+        # per-run text wrapped in the characters CSV must quote: comma, quote, newline, non-ASCII
+        "execution_result": f'{rhex()}, "{rhex()}"\n{rhex()}\u00e9',
+        "error": f'{rhex()}, "{rhex()}"\n{rhex()}',
     }
     emitted = await contract_client.post("/v1/audit-events", json=payload)
     assert emitted.status_code == 200

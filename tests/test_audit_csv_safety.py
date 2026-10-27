@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import secrets
 
 import httpx
 import pytest
@@ -72,9 +73,10 @@ async def audit_api(monkeypatch):
 )
 async def test_be008_csv_error_is_safe_without_mutating_audit_evidence(audit_api, error, escaped):
     client, session, approval = audit_api
+    formula = f"={secrets.randbelow(10**6)}+{secrets.randbelow(10**6)}"
     created = await client.post(
         "/v1/audit-events",
-        json={"action_id": approval.id, "execution_result": "=1+1", "error": error},
+        json={"action_id": approval.id, "execution_result": formula, "error": error},
     )
     assert created.status_code == 200
     body = created.json()
@@ -97,7 +99,7 @@ async def test_be008_csv_error_is_safe_without_mutating_audit_evidence(audit_api
         "event_hash",
     ]
     assert row["error"] == ("'" + error if escaped else error or "")
-    assert json.loads(row["execution_result_json"]) == "=1+1"
+    assert json.loads(row["execution_result_json"]) == formula
     assert row["event_hash"] == before_hash
 
     listed = await client.get("/v1/audit-events")

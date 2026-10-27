@@ -5,6 +5,7 @@ is generated fresh on each run. Hosts use the reserved .invalid TLD and phone
 numbers use +999, which is not an assigned ITU country code.
 """
 
+import ipaddress
 import secrets
 
 
@@ -26,3 +27,19 @@ def rhost() -> str:
 
 def rbase_url() -> str:
     return f"http://{rhost()}"
+
+
+def remail() -> str:
+    return f"{rhex()}@{rhost()}"
+
+
+def rpublic_ip(version: int = 4) -> str:
+    """A random globally routable address; it is only handed to a mocked resolver."""
+    if version == 4:
+        bits, low = 32, 0
+    else:
+        bits, low = 125, 0x2000 << 112  # 2000::/3, global unicast
+    while True:
+        address = ipaddress.ip_address(low + secrets.randbits(bits))
+        if address.is_global and not address.is_multicast:
+            return str(address)

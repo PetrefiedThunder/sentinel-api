@@ -3,14 +3,14 @@ import secrets
 from types import SimpleNamespace
 
 import pytest
-from _qa_values import rhex, rid
+from _qa_values import remail, rhex, rid
 
 import app.services.onboarding as onboarding
 from app.config import settings
 
 TENANT_ID = rid("ten")
 TENANT_NAME = rhex()
-TENANT_EMAIL = f"{rhex()}@example.invalid"
+TENANT_EMAIL = remail()
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +28,7 @@ def test_be002_onboarding_rejects_weak_signing_and_verification(
     weak_value = {
         "default": type(settings).model_fields["JWT_SECRET"].default,
         "empty": "",
-        "short": "short",
+        "short": secrets.token_hex(8),
     }[configuration]
     monkeypatch.setattr(settings, "JWT_SECRET", weak_value)
     with pytest.raises(RuntimeError, match="JWT_SECRET"):
