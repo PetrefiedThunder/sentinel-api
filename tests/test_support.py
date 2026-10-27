@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import contextmanager
 
+from _qa_values import remail, rhex, rid
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -9,7 +10,9 @@ from app.db import Base, get_db
 from app.main import app
 from app.models import Tenant
 
-TENANT_ID = "ten_test"
+TENANT_ID = rid("ten")
+TENANT_NAME = rhex()
+TENANT_EMAIL = remail()
 
 
 def run(coro):
@@ -24,7 +27,7 @@ async def make_sqlite_session():
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     session = session_factory()
-    tenant = Tenant(id=TENANT_ID, name="Test Tenant", email="team@example.com")
+    tenant = Tenant(id=TENANT_ID, name=TENANT_NAME, email=TENANT_EMAIL)
     session.add(tenant)
     await session.commit()
     return engine, session, tenant
@@ -32,7 +35,7 @@ async def make_sqlite_session():
 
 @contextmanager
 def client_for(session, tenant=None):
-    tenant = tenant or Tenant(id=TENANT_ID, name="Test Tenant", email="team@example.com")
+    tenant = tenant or Tenant(id=TENANT_ID, name=TENANT_NAME, email=TENANT_EMAIL)
 
     async def override_get_db():
         yield session

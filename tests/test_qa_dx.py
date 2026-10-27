@@ -22,11 +22,6 @@ def test_readme_quickstart_payload_matches_public_model(index, schema):
         assert payload.mode == "test", "The local quickstart must suppress real notifications"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="UX-002: CONTRIBUTING names a nonexistent test file",
-)
 def test_contributing_single_file_test_example_exists():
     paths = re.findall(r"pytest\s+(tests/[\w./-]+\.py)", (ROOT / "CONTRIBUTING.md").read_text())
     if not paths:

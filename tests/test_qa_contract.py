@@ -7,12 +7,12 @@ No provider calls, database sockets, or application background bus are needed.
 import csv
 import io
 import json
-import secrets
 import socket
 from pathlib import Path
 
 import httpx
 import pytest
+from _qa_values import rbase_url, remail, rhex, rid
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth import get_current_tenant
@@ -20,10 +20,13 @@ from app.db import Base, get_db
 from app.main import app
 from app.models import Tenant
 
+CONTRACT_TENANT_ID = rid("ten")
+CONTRACT_TENANT_NAME = rhex()
+
 PAYLOAD = {
-    "function_name": "qa_contract_action",
-    "arguments": {"sample": "synthetic"},
-    "approvers": [f"qa-contract-{secrets.token_hex(8)}@example.invalid"],
+    "function_name": f"fn_{rhex()}",
+    "arguments": {rhex(): rhex()},
+    "approvers": [remail()],
 }
 
 
@@ -51,9 +54,9 @@ async def contract_client(monkeypatch):
             await connection.run_sync(Base.metadata.create_all)
         async with async_sessionmaker(engine, expire_on_commit=False)() as session:
             tenant = Tenant(
-                id="ten_qa_contract",
-                name="QA Contract",
-                email=f"qa-contract-{secrets.token_hex(8)}@example.invalid",
+                id=CONTRACT_TENANT_ID,
+                name=CONTRACT_TENANT_NAME,
+                email=remail(),
                 mode="test",
             )
             session.add(tenant)
@@ -68,7 +71,7 @@ async def contract_client(monkeypatch):
             app.dependency_overrides[get_db] = local_database
             app.dependency_overrides[get_current_tenant] = local_tenant
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://qa.invalid"
+                transport=httpx.ASGITransport(app=app), base_url=rbase_url()
             ) as client:
                 yield client
     finally:
@@ -130,16 +133,22 @@ def test_openapi_declares_runtime_request_constraints(component, field, expected
     assert actual == expected
 
 
-@pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="FE-003: CSV download is documented as application/json"
-)
 async def test_openapi_csv_media_type_matches_runtime(contract_client):
     response = await contract_client.get("/v1/audit-events.csv")
     if response.status_code != 200:
         pytest.fail(f"CSV setup failed: HTTP {response.status_code}")
     media_type = response.headers["content-type"].split(";", 1)[0]
     documented = app.openapi()["paths"]["/v1/audit-events.csv"]["get"]["responses"]["200"]
-    assert media_type in documented["content"]
+    assert media_type == "text/csv"
+    assert documented["content"] == {"text/csv": {"schema": {"type": "string"}}}
+    assert response.headers["content-disposition"] == f'attachment; filename="audit-{CONTRACT_TENANT_ID}.csv"'
+    assert next(csv.reader(io.StringIO(response.text))) == [
+        "id", "action_id", "created_at_utc", "execution_result_json", "error", "prev_hash", "event_hash"
+    ]
+    baseline = json.loads(
+        (Path(__file__).parents[1] / "docs" / "openapi.baseline.json").read_text()
+    )
+    assert baseline["paths"]["/v1/audit-events.csv"]["get"]["responses"]["200"] == documented
 
 
 async def test_create_fetch_and_empty_page_response_shapes(contract_client):
@@ -196,8 +205,9 @@ async def test_csv_quotes_unicode_commas_and_newlines(contract_client):
     assert created.status_code == 200
     payload = {
         "action_id": created.json()["action_id"],
-        "execution_result": 'Completed, "reviewed"\nCaf\u00e9',
-        "error": 'Synthetic, "error"\nSecond line',
+        # per-run text wrapped in the characters CSV must quote: comma, quote, newline, non-ASCII
+        "execution_result": f'{rhex()}, "{rhex()}"\n{rhex()}\u00e9',
+        "error": f'{rhex()}, "{rhex()}"\n{rhex()}',
     }
     emitted = await contract_client.post("/v1/audit-events", json=payload)
     assert emitted.status_code == 200
