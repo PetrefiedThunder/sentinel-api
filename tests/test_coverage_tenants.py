@@ -13,8 +13,8 @@ from sqlalchemy import select
 from test_support import client_for, make_sqlite_session, run
 
 from app.config import settings
-from app.routers.tenants import BLOCKED_DOMAINS
 from app.models import ApiKey
+from app.routers.tenants import BLOCKED_DOMAINS
 from app.services.onboarding import create_token
 
 
