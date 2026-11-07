@@ -3,7 +3,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [codex/validate-api49-20261107-7KJEfk]
   workflow_dispatch:
 
 jobs:
@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: 5aeca6d2db5bd02e3b8cef1983f2da005def1bbc
+          fetch-depth: 2
 
       - uses: actions/setup-python@v7
         with:
@@ -46,6 +49,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: 5aeca6d2db5bd02e3b8cef1983f2da005def1bbc
+          fetch-depth: 2
 
       - uses: actions/setup-python@v7
         with:
@@ -70,6 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: 5aeca6d2db5bd02e3b8cef1983f2da005def1bbc
           fetch-depth: 0   # gitleaks needs full history to scan past commits
 
       - uses: actions/setup-python@v7
@@ -100,3 +107,91 @@ jobs:
         run: |
           curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /tmp gitleaks
           /tmp/gitleaks git . --redact --no-banner
+
+  docker-python315:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: ci-disposable-only
+          POSTGRES_DB: sentinel_idempotency_test_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sentinel -d sentinel_idempotency_test_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql+asyncpg://sentinel:ci-disposable-only@127.0.0.1:5432/sentinel_idempotency_test_ci
+      REDIS_URL: redis://127.0.0.1:6379/0
+      SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL: postgresql+asyncpg://sentinel:ci-disposable-only@127.0.0.1:5432/sentinel_idempotency_test_ci
+      SENTINEL_IDEMPOTENCY_TEST_ALLOW_SCHEMA_CREATE: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 5aeca6d2db5bd02e3b8cef1983f2da005def1bbc
+          fetch-depth: 2
+      - name: Verify integration commit and parents
+        run: |
+          test "$(git rev-parse HEAD)" = "5aeca6d2db5bd02e3b8cef1983f2da005def1bbc"
+          test "$(git show -s --format=%P HEAD)" = "4ea8eb1daad26d6ed847448ed48c901a38c424a6 aca92295a91cc41d5b94a6d62ad733831d8ac2ce"
+          git show -s --format="%H %P"
+          git status --porcelain
+      - name: Build unchanged Dockerfile with pinned Python 3.15 image
+        run: docker build --pull --no-cache --progress=plain -t sentinel-pr49-validation .
+      - name: Verify Python version and installed production dependencies
+        run: |
+          docker run --rm sentinel-pr49-validation python -c 'import sys; print(sys.version); assert sys.version_info[:2] == (3, 15)'
+          docker run --rm sentinel-pr49-validation pip check
+          docker run --rm sentinel-pr49-validation pip freeze
+      - name: Run production CMD migrations and health smoke test
+        run: |
+          docker run -d --name sentinel-pr49-runtime --network host -e DATABASE_URL -e REDIS_URL -e PORT=18000 sentinel-pr49-validation
+          python - <<'CHECK'
+          import json
+          import time
+          import urllib.request
+          for attempt in range(60):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:18000/health', timeout=2) as response:
+                      data = json.load(response)
+                  assert data == {'status': 'ok', 'bus': True}, data
+                  print('Python 3.15 production runtime health:', data)
+                  break
+              except Exception:
+                  if attempt == 59:
+                      raise
+                  time.sleep(1)
+          with urllib.request.urlopen('http://127.0.0.1:18000/openapi.json', timeout=5) as response:
+              spec = json.load(response)
+          assert '/v1/approvals' in spec['paths'], spec['paths'].keys()
+          print('OpenAPI served:', spec['info'])
+          CHECK
+          docker exec sentinel-pr49-runtime alembic current
+          docker logs sentinel-pr49-runtime
+          docker stop sentinel-pr49-runtime
+      - name: Run test suite in Python 3.15 image including disposable PostgreSQL tests
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL -e REDIS_URL \
+            -e SENTINEL_IDEMPOTENCY_TEST_DATABASE_URL \
+            -e SENTINEL_IDEMPOTENCY_TEST_ALLOW_SCHEMA_CREATE \
+            sentinel-pr49-validation sh -ec 'pip install --no-cache-dir -e ".[dev]"; pip check; python --version; pytest -q -rs --cov=app --cov-report=term-missing'
+      - name: Runtime logs and cleanup
+        if: always()
+        run: |
+          docker logs sentinel-pr49-runtime 2>&1 || true
+          docker rm -f sentinel-pr49-runtime 2>/dev/null || true
